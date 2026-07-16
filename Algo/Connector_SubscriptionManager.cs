@@ -9,7 +9,7 @@ namespace StockSharp.Algo;
 /// <param name="logReceiver">Log receiver.</param>
 /// <param name="transactionIdGenerator">Transaction id generator.</param>
 /// <param name="sendUnsubscribeWhenDisconnected">Indicates whether to send unsubscribe requests while disconnected.</param>
-public class ConnectorSubscriptionManager(ILogReceiver logReceiver, IdGenerator transactionIdGenerator, bool sendUnsubscribeWhenDisconnected)
+public class ConnectorSubscriptionManager(ILogReceiver logReceiver, IdGenerator transactionIdGenerator, bool sendUnsubscribeWhenDisconnected) : IConnectorSubscriptionManager
 {
 	/// <summary>
 	/// Actions produced by <see cref="ConnectorSubscriptionManager"/>.
