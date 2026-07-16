@@ -58,8 +58,38 @@ class LevelOrders : IEnumerable<ExecutionMessage>
 }
 
 /// <summary>
-/// Emulator.
+/// Legacy (V1) in-memory market / paper-trading emulator. Implements <see cref="IMarketEmulator"/>.
 /// </summary>
+/// <remarks>
+/// <para>
+/// What it does: this is the original, first-generation emulator. It accepts inbound market-data and
+/// transaction (order) messages and simulates exchange behavior fully in memory — order matching,
+/// order-book construction, own-trade generation, and portfolio money/position bookkeeping — emitting
+/// the resulting output messages. Inbound messages are handled by a single <c>SendInMessageAsync</c>
+/// dispatch that switches on the message type (Time, Execution, QuoteChange, and so on) and routes work
+/// to per-security emulator instances (order matching and order-book maintenance) and per-portfolio
+/// emulator instances (money and position bookkeeping).
+/// </para>
+/// <para>
+/// Why it is legacy: this is a large, monolithic first-generation (V1) implementation. It has been
+/// superseded by the modern, modular V2 emulator
+/// <see cref="StockSharp.Algo.Testing.Emulation.MarketEmulator"/>, which delegates its order-matching,
+/// margin, and stop-order logic to the decomposed MatchingEngine components — <see cref="IOrderMatcher"/>,
+/// <see cref="IOrderBook"/>, <see cref="IMarginController"/>, <see cref="IStopOrderManager"/>,
+/// <see cref="IPortfolioManager"/>, and <see cref="IOrderLifecycleManager"/> — by wrapping the
+/// <see cref="MatchingEngineAdapter"/>. New code must use
+/// <see cref="StockSharp.Algo.Testing.Emulation.MarketEmulator"/> instead; this type is accordingly
+/// flagged with the <see cref="ObsoleteAttribute"/> ("Use MarketEmulator instead.").
+/// </para>
+/// <para>
+/// Why it is retained (load-bearing): it is actively parity-guarded. The MarketEmulatorComparisonTests
+/// suite drives this V1 emulator and the V2 emulator with identical inputs and asserts that their output
+/// message streams match one-for-one (message-by-message), guaranteeing behavioral equivalence between
+/// the two implementations. Because that parity suite depends on it, this type must not be deleted or
+/// functionally altered. Its eventual retirement is a separate, future phase — to be undertaken only
+/// after equivalence has been fully established — and nothing here is marked safe-to-remove in this pass.
+/// </para>
+/// </remarks>
 [Obsolete("Use MarketEmulator instead.")]
 public class MarketEmulatorOld : BaseLogReceiver, IMarketEmulator
 {

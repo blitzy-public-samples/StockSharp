@@ -13,6 +13,23 @@ using StockSharp.Reporting;
 /// <summary>
 /// The base class for all trade strategies.
 /// </summary>
+/// <remarks>
+/// <see cref="StrategyOld"/> is the original monolithic trade-strategy engine: a single, very large class
+/// (split only across partial files) that internally handled the entire strategy lifecycle (start/stop and the
+/// process-state machine), together with order and own-trade processing, position and PnL tracking, market-data
+/// subscription management, market-rule containment, and the high-level trading helpers, all in one type.
+/// It is legacy because it has been superseded by the modern, decomposed <see cref="Strategy"/> engine, whose
+/// responsibilities are split across focused collaborators: <see cref="StrategyEngine"/> for the lifecycle and
+/// process-state machine, <see cref="OrderPipeline"/> for order processing, <see cref="TradePipeline"/> for
+/// own-trade and PnL processing, <see cref="PositionPipeline"/> for position tracking, and
+/// <see cref="SubscriptionRegistry"/> for market-data subscriptions. <see cref="StrategyOld"/> is retained only
+/// for reference and equivalence testing.
+/// It remains load-bearing: parity and equivalence test suites in the Tests project run the legacy and modern
+/// engines side by side and assert message-by-message equivalence, namely StrategyDecomposedParityTests,
+/// StrategyDecomposedEquivalenceTests, StrategyDecomposedFullEquivalenceTests, StrategyDecomposedTests, and
+/// StrategyReferenceSurfaceTests. Removing <see cref="StrategyOld"/> is therefore a distinct future phase and is
+/// not part of this change.
+/// </remarks>
 [Obsolete("Use Strategy instead. StrategyOld is the legacy monolith engine kept only for reference and equivalence testing.")]
 public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IMarketRuleContainer,
 	ICloneable<StrategyOld>, IMarketDataProvider, ISubscriptionProvider, ISecurityProvider,
@@ -21,6 +38,10 @@ public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IM
 {
 	private const MessageTypes _strategyChangeState = (MessageTypes)(-11);
 
+	/// <summary>
+	/// Internal message that carries a requested <see cref="ProcessStates"/> transition for a
+	/// <see cref="StrategyOld"/> instance through the connector's message pipeline.
+	/// </summary>
 	private class StrategyChangeStateMessage(StrategyOld strategy, ProcessStates state)
 		: Message(_strategyChangeState)
 	{
@@ -33,6 +54,10 @@ public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IM
 		}
 	}
 
+	/// <summary>
+	/// Market-rule list that blocks adding new rules once the owning strategy has entered the
+	/// <see cref="ProcessStates.Stopping"/> state.
+	/// </summary>
 	private class StrategyRuleList(StrategyOld strategy)
 		: MarketRuleList(strategy)
 	{
@@ -44,6 +69,10 @@ public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IM
 		}
 	}
 
+	/// <summary>
+	/// Per-order bookkeeping: tracks whether a cancellation has been requested, the cumulative received
+	/// volume, and the previous order state.
+	/// </summary>
 	private class OrderInfo
 	{
 		public bool IsCanceled { get; set; }
@@ -51,6 +80,10 @@ public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IM
 		public OrderStates PrevState { get; set; } = OrderStates.None;
 	}
 
+	/// <summary>
+	/// Tracks the strategy's indicators and their formed state, exposing whether every tracked indicator
+	/// has become formed.
+	/// </summary>
 	private class IndicatorList(StrategyOld strategy)
 		: SynchronizedSet<IIndicator>
 	{

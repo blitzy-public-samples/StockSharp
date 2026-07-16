@@ -2,6 +2,19 @@ namespace StockSharp.Algo.Strategies;
 
 partial class StrategyOld
 {
+	// ISubscriptionProvider surface (legacy engine).
+	//
+	// This fragment is StrategyOld's explicit ISubscriptionProvider implementation: it exposes the
+	// active subscriptions (ISubscriptionProvider.Subscriptions), the lookup subscriptions
+	// (SecurityLookup / BoardLookup / DataTypeLookup / PortfolioLookup / OrderLookup), the public
+	// Subscribe / UnSubscribe entry points, and the market-data value and lifecycle events
+	// (Level1Received, OrderBookReceived, TickTradeReceived, OrderLogReceived, SecurityReceived,
+	// BoardReceived and the remaining order/portfolio/position/subscription events), largely
+	// delegating the underlying work to SafeGetConnector().
+	//
+	// Part of the legacy StrategyOld monolith, retained for reference/equivalence testing only and
+	// superseded by the modern Strategy engine.
+
 	private ISubscriptionProvider SubscriptionProvider => SafeGetConnector();
 
 	IEnumerable<Subscription> ISubscriptionProvider.Subscriptions => _subscriptions.CachedKeys;

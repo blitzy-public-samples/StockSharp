@@ -3,6 +3,23 @@ namespace StockSharp.MatchingEngine;
 /// <summary>
 /// Emulated portfolio implementation that tracks positions and money in-memory.
 /// </summary>
+/// <remarks>
+/// This is a pure in-memory account model used by the emulator for backtesting and paper trading.
+/// It keeps no persistent state: there is no database, file, or external store behind it, so all
+/// cash, per-security positions, realized and unrealized PnL, commission, and funds blocked for
+/// working orders live only inside this instance and are discarded on reset.
+/// <para>
+/// The account obeys three money identities, expressed here in business terms:
+/// current money = starting money + total PnL (<see cref="CurrentMoney"/>);
+/// available money = current money - money blocked for working orders (<see cref="AvailableMoney"/>);
+/// total PnL = realized PnL - commission paid (<see cref="TotalPnL"/>).
+/// </para>
+/// <para>
+/// Margin thresholds default to a margin-call level of 0.5 (<see cref="MarginCallLevel"/>) and a
+/// stop-out level of 0.2 (<see cref="StopOutLevel"/>); automatic stop-out liquidation is disabled by
+/// default (<see cref="EnableStopOut"/>).
+/// </para>
+/// </remarks>
 public class EmulatedPortfolio : IPortfolio
 {
 	private readonly Dictionary<SecurityId, PositionInfo> _positions = [];
@@ -85,6 +102,16 @@ public class EmulatedPortfolio : IPortfolio
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Applies an executed trade to the account: it adds any commission, updates the position, and
+	/// realizes PnL according to how the fill changes that position. When the position is closed out,
+	/// PnL is realized for the whole prior position; when a flat position is opened, the trade price
+	/// becomes the average entry price; when the position is increased, a new volume-weighted average
+	/// entry price is computed; when it is partially closed, PnL is realized only for the closed
+	/// portion while the average price is kept; and when it flips from long to short (or vice versa),
+	/// the old position is fully realized and a new one is opened at the trade price. Finally, the
+	/// bid or ask volume and value that had been reserved for the executed order are released.
+	/// </remarks>
 	public TradeProcessingResult ProcessTrade(SecurityId securityId, Sides side, decimal price, decimal volume, decimal? commission = null)
 	{
 		var pos = GetOrCreatePosition(securityId);
@@ -170,6 +197,11 @@ public class EmulatedPortfolio : IPortfolio
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Reserves funds for a newly registered working order by adding its volume and notional value
+	/// to the position's pending buy or sell totals, then recomputes the money blocked across all
+	/// positions so that available money reflects the outstanding order.
+	/// </remarks>
 	public void ProcessOrderRegistration(SecurityId securityId, Sides side, decimal volume, decimal price)
 	{
 		var pos = GetOrCreatePosition(securityId);
@@ -190,6 +222,11 @@ public class EmulatedPortfolio : IPortfolio
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Releases funds previously reserved for a working order by subtracting its volume and notional
+	/// value from the position's pending buy or sell totals, then recomputes the money blocked across
+	/// all positions so that the freed funds become available again.
+	/// </remarks>
 	public void ProcessOrderCancellation(SecurityId securityId, Sides side, decimal volume, decimal price = 0)
 	{
 		var pos = GetOrCreatePosition(securityId);
@@ -209,6 +246,13 @@ public class EmulatedPortfolio : IPortfolio
 		UpdateBlockedMoney();
 	}
 
+	/// <summary>
+	/// Recomputes the total money blocked for working orders by netting each position's pending buy
+	/// and sell orders against its current exposure, then summing across all positions. For a flat
+	/// position the blocked amount is the sum of buy and sell order value; for a long position it is
+	/// the greater of (position value plus buy orders) or sell orders; and for a short position it is
+	/// the greater of (position value plus sell orders) or buy orders.
+	/// </summary>
 	private void UpdateBlockedMoney()
 	{
 		_totalBlockedMoney = 0;
@@ -252,6 +296,12 @@ public class EmulatedPortfolio : IPortfolio
 	public IEnumerable<PositionInfo> GetAllPositions() => _positions.Values;
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Marks all open positions to market and sums their paper gains and losses: for each position
+	/// with a known current price, the unrealized PnL is the difference between the current price and
+	/// the average entry price multiplied by the signed position size. Positions whose current price
+	/// is unavailable are skipped and contribute nothing.
+	/// </remarks>
 	public decimal CalculateUnrealizedPnL(Func<SecurityId, decimal?> getCurrentPrice)
 	{
 		if (getCurrentPrice is null)
@@ -290,6 +340,14 @@ public class EmulatedPortfolio : IPortfolio
 /// <summary>
 /// Portfolio manager that creates emulated portfolios in-memory.
 /// </summary>
+/// <remarks>
+/// An in-memory registry of <see cref="EmulatedPortfolio"/> accounts keyed by name, used by the
+/// emulator for backtesting and paper trading. Like the portfolios it holds, it keeps no persistent
+/// state - there is no database or external store - and it lazily creates one portfolio per name the
+/// first time that name is requested. An optional <see cref="IMarginController"/> can be attached to
+/// apply leverage-aware fund checks; when none is set, order validation falls back to a plain
+/// notional (price times volume) available-funds check.
+/// </remarks>
 public class EmulatedPortfolioManager : IPortfolioManager
 {
 	private readonly Dictionary<string, EmulatedPortfolio> _portfolios = [];
@@ -300,6 +358,10 @@ public class EmulatedPortfolioManager : IPortfolioManager
 	public IMarginController MarginController { get; set; }
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Returns the portfolio already registered under the given name, or lazily creates and registers
+	/// a new empty <see cref="EmulatedPortfolio"/> for that name on first request.
+	/// </remarks>
 	public IPortfolio GetPortfolio(string name)
 	{
 		if (!_portfolios.TryGetValue(name, out var portfolio))
@@ -323,6 +385,12 @@ public class EmulatedPortfolioManager : IPortfolioManager
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Checks whether the named portfolio can afford the order; unknown portfolios pass with no error.
+	/// When an <see cref="IMarginController"/> is configured, the decision is delegated to it so that
+	/// leverage is taken into account; otherwise a plain notional check is applied, rejecting the order
+	/// with an "Insufficient funds" error when available money is below price times volume.
+	/// </remarks>
 	public InvalidOperationException ValidateFunds(string portfolioName, SecurityId securityId, decimal price, decimal volume)
 	{
 		if (!HasPortfolio(portfolioName))

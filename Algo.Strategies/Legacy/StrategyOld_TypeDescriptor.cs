@@ -1,5 +1,15 @@
 ﻿namespace StockSharp.Algo.Strategies;
 
+// ICustomTypeDescriptor fragment of the legacy StrategyOld monolith engine.
+//
+// This file supplies StrategyOld's component-model type-description surface: it projects the
+// strategy's IStrategyParam collection (returned by GetParameters) as PropertyDescriptor instances -
+// one nested StrategyParamPropDescriptor per parameter, built on demand by
+// ICustomTypeDescriptor.GetProperties - so designers and property grids can discover and bind to
+// strategy parameters.
+//
+// StrategyOld is retained only for reference and equivalence testing and is superseded by the modern
+// Strategy engine.
 partial class StrategyOld
 {
 	private class StrategyParamPropDescriptor(IStrategyParam param) : NamedPropertyDescriptor(param.Id, [.. param.Attributes])

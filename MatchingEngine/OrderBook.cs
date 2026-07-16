@@ -1,8 +1,18 @@
 namespace StockSharp.MatchingEngine;
 
 /// <summary>
-/// Order book level containing orders.
+/// A single price level in the emulator order book. Every level mixes two kinds of liquidity:
+/// synthesized market depth held in <c>MarketVolume</c> and real registered user orders indexed by
+/// <see cref="EmulatorOrder.TransactionId"/>.
 /// </summary>
+/// <remarks>
+/// Only identified user orders are stored as orders: <see cref="AddOrder"/> rejects a default
+/// <see cref="EmulatorOrder.TransactionId"/>, so unidentified book depth is instead accumulated into the
+/// synthetic <c>MarketVolume</c> bucket by the owning book. The advertised size <c>TotalVolume</c> equals
+/// <c>MarketVolume</c> plus the sum of the remaining <see cref="EmulatorOrder.Balance"/> of every registered
+/// order. The level reports <c>IsEmpty</c> only when BOTH sources of liquidity are gone — no synthetic
+/// market volume and no registered orders — at which point the owning book prunes it.
+/// </remarks>
 class OrderBookLevelImpl(decimal price)
 {
 	private readonly Dictionary<long, EmulatorOrder> _ordersByTransId = [];
@@ -38,10 +48,18 @@ class OrderBookLevelImpl(decimal price)
 }
 
 /// <summary>
-/// Order book implementation.
+/// In-memory order book for a single instrument, used by the matching engine as the counterparty
+/// inventory that <see cref="OrderMatcher"/> consumes during matching via <see cref="ConsumeVolume"/>.
 /// </summary>
 /// <remarks>
-/// Create a new order book.
+/// Create a new order book bound to a single instrument (<see cref="SecurityId"/>). The book holds two
+/// sides: bids are sorted highest price first and asks are sorted lowest price first, so the "best" quote
+/// on either side is always the first entry. Each price level aggregates synthesized market depth
+/// (<c>MarketVolume</c>) plus the registered user orders resting at that price (keyed by
+/// <see cref="EmulatorOrder.TransactionId"/>); a level's total volume is the market volume plus the sum of
+/// the user orders' balances. The running side totals exposed as <see cref="TotalBidVolume"/> and
+/// <see cref="TotalAskVolume"/> are cached and kept in sync by every mutation, so callers never have to
+/// re-scan the book to read aggregate size.
 /// </remarks>
 public class OrderBook(SecurityId securityId) : IOrderBook
 {
@@ -55,6 +73,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	public SecurityId SecurityId { get; } = securityId;
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The best bid is the highest-priced level, which — because bids are sorted highest first — is the
+	/// first entry on the buy side. Returns <see langword="null"/> when the bid side is empty. The reported
+	/// volume is the level's aggregated total (synthetic market depth plus resting user orders).
+	/// </remarks>
 	public (decimal price, decimal volume)? BestBid
 	{
 		get
@@ -65,6 +88,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The best ask is the lowest-priced level, which — because asks are sorted lowest first — is the
+	/// first entry on the sell side. Returns <see langword="null"/> when the ask side is empty. The reported
+	/// volume is the level's aggregated total (synthetic market depth plus resting user orders).
+	/// </remarks>
 	public (decimal price, decimal volume)? BestAsk
 	{
 		get
@@ -89,6 +117,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	/// <summary>
 	/// Get worst (lowest) bid level.
 	/// </summary>
+	/// <remarks>
+	/// The worst bid is the level farthest from the market — the last entry on the buy side under the
+	/// highest-first ordering. Returns <see langword="null"/> when the bid side is empty. Used when trimming
+	/// stale depth from the far end of the book.
+	/// </remarks>
 	public (decimal price, decimal volume)? GetWorstBid()
 	{
 		var last = _bids.LastOrDefault();
@@ -98,6 +131,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	/// <summary>
 	/// Get worst (highest) ask level.
 	/// </summary>
+	/// <remarks>
+	/// The worst ask is the level farthest from the market — the last entry on the sell side under the
+	/// lowest-first ordering. Returns <see langword="null"/> when the ask side is empty. Used when trimming
+	/// stale depth from the far end of the book.
+	/// </remarks>
 	public (decimal price, decimal volume)? GetWorstAsk()
 	{
 		var last = _asks.LastOrDefault();
@@ -121,6 +159,13 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The single business distinction applied here is order identity: an <see cref="EmulatorOrder"/> whose
+	/// <see cref="EmulatorOrder.TransactionId"/> is non-default is stored as a real registered user order at
+	/// its price level, whereas a default-transaction quote is folded into that level's synthesized
+	/// <c>MarketVolume</c> bucket. Either way the affected side's cached total is increased by the order's
+	/// <see cref="EmulatorOrder.Balance"/>.
+	/// </remarks>
 	public void AddQuote(EmulatorOrder order)
 	{
 		if (order is null)
@@ -141,6 +186,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Removes a single registered user order identified by its transaction id from a known price level,
+	/// decreasing the side total by the removed order's <see cref="EmulatorOrder.Balance"/> and pruning the
+	/// level if it becomes empty. Returns <see langword="false"/> when no such level or order exists.
+	/// </remarks>
 	public bool RemoveQuote(long transactionId, Sides side, decimal price)
 	{
 		var quotes = GetQuotes(side);
@@ -160,6 +210,12 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Sets the synthesized market volume of a price level to an absolute target (not a delta): the level is
+	/// created when it does not yet exist and <paramref name="volume"/> is greater than zero, and it is
+	/// removed once the update leaves it empty of both synthetic depth and registered user orders. Registered
+	/// user orders already resting at the level are left untouched.
+	/// </remarks>
 	public void UpdateLevel(Sides side, decimal price, decimal volume)
 	{
 		var quotes = GetQuotes(side);
@@ -182,6 +238,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Removes an entire price level and returns the registered user orders that were resting there, so the
+	/// caller can cancel or otherwise handle them; the side total is reduced by the level's whole aggregated
+	/// volume. Returns an empty sequence when the level does not exist.
+	/// </remarks>
 	public IEnumerable<EmulatorOrder> RemoveLevel(Sides side, decimal price)
 	{
 		var quotes = GetQuotes(side);
@@ -199,6 +260,10 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Enumerates the side's levels in book order — best first — projecting each to its aggregated total
+	/// volume together with the registered user orders resting at that price.
+	/// </remarks>
 	public IEnumerable<OrderBookLevel> GetLevels(Sides side)
 	{
 		var quotes = GetQuotes(side);
@@ -251,6 +316,13 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Replacing the book from an external market snapshot never silently drops a live user order. Before the
+	/// existing quotes are cleared, the caller's registered user orders (those flagged
+	/// <see cref="EmulatorOrder.IsUserOrder"/>) are captured; the new market quotes are then loaded from the
+	/// snapshot and the preserved user orders are re-added on top, each restoring its
+	/// <see cref="EmulatorOrder.Balance"/> into the corresponding side total.
+	/// </remarks>
 	public void SetSnapshot(IEnumerable<QuoteChange> bids, IEnumerable<QuoteChange> asks)
 	{
 		// Preserve user orders
@@ -296,6 +368,11 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Produces a <see cref="QuoteChangeMessage"/> snapshot of the current book for the bound
+	/// <see cref="SecurityId"/>, projecting each side to its per-level aggregated total volume (synthetic
+	/// market depth plus resting user orders), ordered best first.
+	/// </remarks>
 	public QuoteChangeMessage ToMessage(DateTime localTime, DateTime serverTime)
 	{
 		return new QuoteChangeMessage
@@ -313,6 +390,12 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 		=> side == Sides.Buy ? _totalBidVolume : _totalAskVolume;
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The blunt trim: whole levels beyond <paramref name="maxDepth"/> are dropped from the far (worst) end
+	/// of the side regardless of what they hold, and every registered order removed with them is returned so
+	/// the caller can react. Contrast with <see cref="TrimSynthesizedDepth"/>, which never removes a level
+	/// holding user orders.
+	/// </remarks>
 	public IEnumerable<EmulatorOrder> TrimToDepth(Sides side, int maxDepth)
 	{
 		var quotes = GetQuotes(side);
@@ -330,6 +413,12 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The user-order-safe trim: synthesized depth is capped to <paramref name="maxDepth"/> levels per side
+	/// by stripping only the synthetic <c>MarketVolume</c> from the farthest levels. A level that holds
+	/// registered user orders is never removed and its user orders are never reordered; trimming stops at the
+	/// first such level so liquidity nearer the market is preserved intact.
+	/// </remarks>
 	public void TrimSynthesizedDepth(Sides side, int maxDepth)
 	{
 		if (maxDepth < 1)
@@ -374,6 +463,12 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	/// <summary>
 	/// Find and remove order by transaction ID from any level.
 	/// </summary>
+	/// <remarks>
+	/// Complements <see cref="RemoveQuote"/> for the case where the caller knows only the side and the
+	/// transaction id but not the price: it scans every level on the side to locate the order, then removes
+	/// it, adjusts the side total by its <see cref="EmulatorOrder.Balance"/>, and prunes the level if it
+	/// becomes empty.
+	/// </remarks>
 	public bool TryRemoveOrder(long transactionId, Sides side, out EmulatorOrder order)
 	{
 		var quotes = GetQuotes(side);
@@ -402,6 +497,15 @@ public class OrderBook(SecurityId securityId) : IOrderBook
 	/// <param name="maxPrice">Maximum price for buy / minimum for sell.</param>
 	/// <param name="volume">Volume to consume.</param>
 	/// <returns>Executions (price, volume, affected orders).</returns>
+	/// <remarks>
+	/// This is the single primitive the matcher uses for both market and limit fills. It walks the levels of
+	/// the requested side from best to worst, stopping when the requested <paramref name="volume"/> is filled
+	/// or the price limit is reached: for a buy it stops once the ask price exceeds <paramref name="maxPrice"/>,
+	/// and for a sell once the bid price falls below <paramref name="maxPrice"/> (a <see langword="null"/>
+	/// limit means market-style, with no price cap). Within each level the synthesized <c>MarketVolume</c> is
+	/// consumed first and only then are the registered user orders reduced; a user order whose
+	/// <see cref="EmulatorOrder.Balance"/> reaches zero is removed, and any level left empty is pruned.
+	/// </remarks>
 	public IEnumerable<(decimal price, decimal volume, IReadOnlyList<EmulatorOrder> orders)> ConsumeVolume(
 		Sides side,
 		decimal? maxPrice,

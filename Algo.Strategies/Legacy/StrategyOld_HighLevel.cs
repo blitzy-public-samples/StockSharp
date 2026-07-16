@@ -9,6 +9,12 @@ using StockSharp.Charting;
 
 public partial class StrategyOld
 {
+	// High-level trading API fragment of the legacy StrategyOld monolith: exposes the market/limit
+	// order convenience helpers (e.g. BuyMarket/SellMarket) together with the candle- and
+	// indicator-driven trading helpers.
+	//
+	// Part of the legacy StrategyOld engine, retained for reference and equivalence testing only;
+	// superseded by the modern Strategy engine.
 	/// <summary>
 	/// To create initialized object of buy order at market price.
 	/// </summary>
