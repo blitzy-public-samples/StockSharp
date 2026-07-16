@@ -24,11 +24,15 @@ using StockSharp.Reporting;
 /// own-trade and PnL processing, <see cref="PositionPipeline"/> for position tracking, and
 /// <see cref="SubscriptionRegistry"/> for market-data subscriptions. <see cref="StrategyOld"/> is retained only
 /// for reference and equivalence testing.
-/// It remains load-bearing: parity and equivalence test suites in the Tests project run the legacy and modern
-/// engines side by side and assert message-by-message equivalence, namely StrategyDecomposedParityTests,
-/// StrategyDecomposedEquivalenceTests, StrategyDecomposedFullEquivalenceTests, StrategyDecomposedTests, and
-/// StrategyReferenceSurfaceTests. Removing <see cref="StrategyOld"/> is therefore a distinct future phase and is
-/// not part of this change.
+/// It remains load-bearing: it is exercised by a family of parity, equivalence, and surface-completeness test
+/// suites in the Tests project that guard the modern engine against the legacy reference. Each suite plays a
+/// distinct role: StrategyDecomposedFullEquivalenceTests performs the strict, ordered 1:1 event-stream comparison
+/// between the legacy and modern engines (same order, same payloads); StrategyDecomposedParityTests pins focused,
+/// component-level behaviours one at a time; StrategyDecomposedEquivalenceTests replays backtest data through the
+/// decomposed pipelines and checks that the results match; StrategyReferenceSurfaceTests checks shared surface
+/// completeness (that both engines deliver the same must-fire events and properties at all); and
+/// StrategyDecomposedTests provides focused component/unit coverage of the individual decomposed collaborators.
+/// Removing <see cref="StrategyOld"/> is therefore a distinct future phase and is not part of this change.
 /// </remarks>
 [Obsolete("Use Strategy instead. StrategyOld is the legacy monolith engine kept only for reference and equivalence testing.")]
 public partial class StrategyOld : BaseLogReceiver, INotifyPropertyChangedEx, IMarketRuleContainer,

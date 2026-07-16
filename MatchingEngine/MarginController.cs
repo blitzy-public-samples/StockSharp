@@ -18,10 +18,14 @@ namespace StockSharp.MatchingEngine;
 /// "Insufficient funds" error.
 /// </para>
 /// <para>
-/// Portfolio health is measured by a margin level equal to equity ÷ blocked funds. As that level falls it first
-/// crosses the <see cref="IPortfolio.MarginCallLevel"/> warning threshold (a margin call) and then, when
-/// <see cref="IPortfolio.EnableStopOut"/> is set, the more severe <see cref="IPortfolio.StopOutLevel"/> threshold
-/// that forces liquidation of positions (a stop-out).
+/// Portfolio health is measured by a margin level equal to equity ÷ blocked funds. The controller only
+/// reports conditions against that level: it reports a margin call when the level is at or below the
+/// configurable <see cref="IPortfolio.MarginCallLevel"/>, and reports a stop-out when
+/// <see cref="IPortfolio.EnableStopOut"/> is set and the level is at or below the configurable
+/// <see cref="IPortfolio.StopOutLevel"/>. Both thresholds are independently configurable on the portfolio; by
+/// default the stop-out level sits below the margin-call level, but this class enforces no ordering between them.
+/// Acting on a reported condition (issuing a warning, closing positions) is the caller's responsibility; this
+/// class performs no liquidation and emits no warning itself.
 /// </para>
 /// <para>
 /// All calculations are pure arithmetic with no persistence, I/O, or other side effects.
@@ -90,18 +94,22 @@ public class MarginController : IMarginController
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// Business rule: a margin call — a warning that the portfolio is approaching under-collateralisation — occurs
-	/// when the margin level from <see cref="CheckMarginLevel"/> is &lt;= <see cref="IPortfolio.MarginCallLevel"/>.
+	/// Business rule: reports whether a margin-call condition holds — that the portfolio is approaching
+	/// under-collateralisation. It returns <see langword="true"/> when the margin level from
+	/// <see cref="CheckMarginLevel"/> is &lt;= <see cref="IPortfolio.MarginCallLevel"/>. This method only reports
+	/// the condition; it does not itself emit a warning or take any action.
 	/// </remarks>
 	public bool IsMarginCall(IPortfolio portfolio, decimal unrealizedPnL)
 		=> CheckMarginLevel(portfolio, unrealizedPnL) <= portfolio.MarginCallLevel;
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// Business rule: a stop-out — forced liquidation of positions — occurs only when
+	/// Business rule: reports whether a stop-out condition holds. It returns <see langword="true"/> only when
 	/// <see cref="IPortfolio.EnableStopOut"/> is enabled and the margin level from <see cref="CheckMarginLevel"/>
-	/// is &lt;= <see cref="IPortfolio.StopOutLevel"/>. This is the more severe threshold beneath the margin-call
-	/// warning and automatically closes positions.
+	/// is &lt;= <see cref="IPortfolio.StopOutLevel"/>. By default this threshold sits beneath the margin-call
+	/// level, but the two are independently configurable and no ordering is enforced. This method only reports the
+	/// condition; it does not itself close positions or perform any liquidation — acting on the result is the
+	/// caller's responsibility.
 	/// </remarks>
 	public bool IsStopOut(IPortfolio portfolio, decimal unrealizedPnL)
 		=> portfolio.EnableStopOut && CheckMarginLevel(portfolio, unrealizedPnL) <= portfolio.StopOutLevel;

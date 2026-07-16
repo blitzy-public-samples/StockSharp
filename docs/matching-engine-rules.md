@@ -14,14 +14,18 @@ business intent.
 
 A few properties hold throughout and are worth stating up front:
 
-- **In-memory only.** The engine keeps *all* of its state — order books, portfolios, positions,
-  realized and unrealized profit-and-loss, blocked funds, and pending stop orders — in memory for
-  the lifetime of the emulation. There is **no persistent store** behind it; state is discarded on
-  reset. Nothing described here is loaded from or saved to any external system.
+- **In-memory only.** The engine keeps its state — order books, portfolios, positions, realized
+  profit-and-loss, blocked funds, and pending stop orders — in memory for the lifetime of the
+  emulation. (Unrealized PnL is *not* stored; it is computed on demand from the in-memory positions
+  and caller-supplied current prices.) There is **no persistent store** behind it; state is discarded
+  on reset. Nothing described here is loaded from or saved to any external system.
 - **Documentation only.** This catalog *describes* existing behavior; it changes nothing. Where any
   wording here appears to differ from the engine source, the source code is authoritative.
-- **Deterministic and side-effect-free math.** Margin, PnL, and triggering are pure arithmetic over
-  the in-memory state, so identical inputs always produce identical outputs.
+- **Deterministic calculations.** The individual formulas — required margin, margin level, PnL, and
+  stop-trigger comparisons — are pure arithmetic, so identical inputs always produce identical outputs.
+  Some operations do mutate the in-memory state (for example, applying a trade updates a portfolio's
+  positions and money, and evaluating stops can arm, update, or remove pending stop orders), but no
+  operation performs any persistence or external I/O.
 
 The rules are organized into four groups:
 
@@ -142,16 +146,30 @@ matcher consumes.
 
 ### 1.8 Matching settings and defaults
 
-The matcher is parameterized by a small settings object. Its business-relevant defaults are:
+Two distinct settings objects are involved, and it is important not to conflate them.
 
-| Setting | Default | Meaning |
-|---------|---------|---------|
-| `PriceStep` | `0.01` | Smallest price increment of the instrument. |
-| `VolumeStep` | `1` | Smallest volume increment of the instrument. |
-| `SpreadSize` | `1` | Spread size, in price steps, when synthesizing a book from ticks. |
-| `MaxDepth` | `10` | Maximum synthesized book depth per side. |
-| `AllowMarketOrdersWithoutBook` | `true` | Allow market orders to match even without a full book. |
-| `UseOrderPriceForLimitTrades` | `false` (unset) | Print limit trades at the order's own price (candle-based matching) rather than the resting price. |
+**`MatchingSettings`** is the small per-match object handed to the order matcher. In production the
+adapter populates only `PriceStep` and `VolumeStep` (from the instrument), and the matcher itself reads
+**only** `UseOrderPriceForLimitTrades`. The remaining members are declared on the type with defaults but
+are **not consumed by the matcher**, so their declaration defaults have no runtime effect on matching:
+
+| Setting | Declared default | Consumed by matcher? | Meaning |
+|---------|------------------|----------------------|---------|
+| `PriceStep` | `0.01` | No — set from the instrument, carried for reference | Smallest price increment of the instrument. |
+| `VolumeStep` | `1` | No — set from the instrument, carried for reference | Smallest volume increment of the instrument. |
+| `SpreadSize` | `1` | No | Declared spread size, in price steps. Book synthesis uses the operative value below, not this one. |
+| `MaxDepth` | `10` | No | Declared max synthesized depth. Book synthesis uses the operative value below, not this one. |
+| `AllowMarketOrdersWithoutBook` | `true` | No — **currently unused** (no production read site) | Intended to allow market orders to match without a full book; not referenced by any current code. |
+| `UseOrderPriceForLimitTrades` | `false` (unset) | **Yes** — the only member the matcher acts on | Print limit trades at the order's own price (candle-based matching) rather than the resting price. |
+
+**`MatchingEngineSettings`** is the operative, adapter-level configuration that actually drives order-book
+synthesis from ticks/Level1. Its defaults differ from the `MatchingSettings` declaration defaults above:
+
+| Setting | Operative default | Meaning |
+|---------|-------------------|---------|
+| `SpreadSize` | `2` | Spread size, in price steps, when synthesizing a book from ticks. |
+| `MaxDepth` | `5` | Maximum synthesized book depth per side (stale levels beyond this are pruned). |
+| `IncreaseDepthVolume` | `true` | Add extra volume to the book when registering an order larger than the resting depth. |
 
 ---
 
@@ -159,9 +177,12 @@ The matcher is parameterized by a small settings object. Its business-relevant d
 
 The margin controller implements the platform's **leverage-based margin model**. Required margin
 scales with an order's notional value and shrinks proportionally with leverage; order acceptance is
-funds-based; and portfolio health is measured by a **margin level** that, as it falls, first
-triggers a **margin call** warning and then, if enabled, a **stop-out** (forced liquidation). All of
-its calculations are pure arithmetic with no persistence or other side effects.
+funds-based; and portfolio health is measured by a **margin level**. The controller only **reports**
+conditions against that level — a **margin call** when the level reaches or drops below the configured
+margin-call level, and a **stop-out** (when enabled) when it reaches or drops below the configured
+stop-out level. It performs no liquidation and emits no warning itself; acting on a reported condition
+is the caller's responsibility. All of its calculations are pure arithmetic with no persistence or
+other side effects.
 
 The following table states each rule as a `Concept → Rule` pair. In the formulas, *equity* means
 current money plus the supplied unrealized PnL.
@@ -171,8 +192,8 @@ current money plus the supplied unrealized PnL.
 | **Required (initial) margin** | `requiredMargin = price × volume ÷ leverage`. The `leverage` comes from the position (defaulting to `1` when there is no position) and is **floored at `1`** — any missing or below-`1` leverage is treated as unleveraged 1:1 margin. Because leverage divides the notional value, **higher leverage requires proportionally less margin**. |
 | **Order validation** | A **null portfolio** is a programming error (an argument error is raised). Otherwise the order is **accepted** (no error returned) as long as the portfolio's free cash covers the required margin. It is **rejected** — returning an error whose message is `Insufficient funds: need {requiredMargin}, available {AvailableMoney}` — when `AvailableMoney < requiredMargin`. |
 | **Margin level** | If `BlockedMoney ≤ 0` there is **no open exposure**, so the level is reported as effectively **infinite** (the maximum representable value = fully safe). Otherwise `marginLevel = (CurrentMoney + unrealizedPnL) ÷ BlockedMoney`. |
-| **Margin call (warning)** | A margin call — a warning that the portfolio is approaching under-collateralization — occurs when `marginLevel ≤ MarginCallLevel`. |
-| **Stop-out (forced liquidation)** | A stop-out — automatic forced liquidation of positions — occurs **only when `EnableStopOut` is `true`** *and* `marginLevel ≤ StopOutLevel`. This is the more severe threshold that sits **below** the margin-call warning level. |
+| **Margin call** | `IsMarginCall` **reports** a margin-call condition — the portfolio approaching under-collateralization — when `marginLevel ≤ MarginCallLevel`. It returns a boolean only; it does not itself emit a warning or take any action. |
+| **Stop-out** | `IsStopOut` **reports** a stop-out condition **only when `EnableStopOut` is `true`** *and* `marginLevel ≤ StopOutLevel`. It returns a boolean only; it performs no liquidation. `MarginCallLevel` and `StopOutLevel` are independently configurable; by **default** the stop-out level (`0.2`) sits below the margin-call level (`0.5`), but no relative ordering is enforced. |
 
 > The portfolio-level thresholds `MarginCallLevel`, `StopOutLevel`, and the `EnableStopOut` switch,
 > together with their defaults, are described in [§4](#4-emulated-bookkeeping-emulatedportfoliomanager).
@@ -271,8 +292,9 @@ consists of the emulated portfolios themselves and a manager that owns them.
 ### 4.1 In-memory account model
 
 An emulated portfolio is a **pure in-memory account**. It keeps its per-security positions in an
-in-memory dictionary keyed by `SecurityId`, and holds all cash, realized and unrealized PnL,
-commission, and funds blocked for working orders **only inside the instance**. There is **no
+in-memory dictionary keyed by `SecurityId`, and holds all cash, realized PnL, commission, and funds
+blocked for working orders **only inside the instance**. Unrealized PnL is **not** stored — it is
+computed on demand from the in-memory positions and caller-supplied current prices. There is **no
 database, file, or external store** behind it, and all state is discarded on reset.
 
 ### 4.2 Money identities
@@ -353,4 +375,3 @@ Its fund-validation rule (`ValidateFunds`) behaves as follows:
 - Otherwise a **plain notional check** is applied: the order is **rejected** with an
   `Insufficient funds: need {price × volume}, available {AvailableMoney}` error when
   `AvailableMoney < price × volume`, and accepted otherwise.
-

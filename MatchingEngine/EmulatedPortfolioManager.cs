@@ -6,8 +6,9 @@ namespace StockSharp.MatchingEngine;
 /// <remarks>
 /// This is a pure in-memory account model used by the emulator for backtesting and paper trading.
 /// It keeps no persistent state: there is no database, file, or external store behind it, so all
-/// cash, per-security positions, realized and unrealized PnL, commission, and funds blocked for
-/// working orders live only inside this instance and are discarded on reset.
+/// cash, per-security positions, realized PnL, commission, and funds blocked for working orders live
+/// only inside this instance and are discarded on reset. Unrealized PnL is not stored; it is computed on
+/// demand by <see cref="CalculateUnrealizedPnL"/> from the in-memory positions and caller-supplied current prices.
 /// <para>
 /// The account obeys three money identities, expressed here in business terms:
 /// current money = starting money + total PnL (<see cref="CurrentMoney"/>);
