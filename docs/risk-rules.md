@@ -26,10 +26,14 @@ A few properties hold throughout and are worth stating up front:
 - **Three possible actions.** A triggered rule requests exactly one of `ClosePositions`,
   `StopTrading`, or `CancelOrders`; these are the only responses. See
   [§2](#2-actions-taken-when-a-rule-fires).
-- **Thresholds and directions are precise.** For most value-threshold rules a **zero threshold
-  disables the rule**, and the **sign of the threshold selects the comparison direction** (positive
-  = upper bound, negative = lower bound). A few rules deliberately differ (strict vs inclusive
-  comparisons, counters rather than thresholds); each difference is called out explicitly.
+- **Thresholds and directions are precise.** For the **signed-threshold** rules (the commission,
+  PnL, position-size, and slippage rules) a **zero threshold disables the rule**, and the **sign of
+  the threshold selects the comparison direction** (positive = upper bound, negative = lower bound).
+  This is **not** universal: the price and volume rules keep comparing even when their threshold is
+  `0`, the error and frequency rules use a **count** rather than a signed threshold (and a count of
+  `0` does not disable them), the position-time rule uses a **duration**, and the slippage rule
+  compares **strictly** rather than inclusively. Each of these differences is called out explicitly
+  below.
 - **Configuration round-trips.** Every rule can save and restore its configured settings (its action
   and thresholds) so a configured rule set can be reproduced exactly. This is ordinary settings
   serialization; there is no external data store of any kind behind the risk engine.
@@ -68,13 +72,27 @@ values in [§2](#2-actions-taken-when-a-rule-fires).
 2. **Extract a monitored value.** From the accepted message the rule reads the one value it watches
    — a profit-and-loss figure, a commission amount, an order price or volume, a slippage figure, a
    position size, and so on. If the value is missing, the rule returns `false`.
-3. **A zero threshold means "disabled."** For the value-threshold rules, a configured threshold of
-   **zero** switches the rule off — it never activates. (The counting rules in the Errors and
-   frequency families are the exception: they use a positive count rather than a signed threshold.)
-4. **The sign of the threshold selects the direction.** A **positive** threshold is treated as an
-   **upper bound** (activate when the monitored value has risen to or past it), and a **negative**
-   threshold is treated as a **lower bound** (activate when the value has fallen to or past it).
-   This one convention lets a single numeric setting express both "too high" and "too low" limits.
+3. **A zero threshold disables only the signed-threshold rules.** For the rules that compare a value
+   against a **signed** threshold — the commission, PnL, position-size, and slippage rules — a
+   configured threshold of **zero** switches the rule off, and it never activates. This is **not**
+   universal, and the exceptions matter:
+   - the **price** and **volume** rules have no zero guard, so a threshold of `0` leaves them
+     **active**: every qualifying order or trade satisfies `value >= 0` (an order *replacement*
+     additionally requires a strictly positive price/volume);
+   - the **error** rules count occurrences with a pre-incremented counter, so a `Count` of `0`
+     activates on the **first** matching error (`RiskOrderErrorRule` likewise activates on the first
+     failure at a `Count` of `0` **or** `1`);
+   - the **frequency** rules require `Count >= 1`, and because the window is anchored on the first
+     event, an `Interval` of `0` means no later event can fall inside the window, so the rule never
+     fires;
+   - the **position-time** rule uses a duration: a `Time` of `0` still **seeds** on the first
+     non-zero position observation and then activates on the very next qualifying position or clock
+     message.
+4. **The sign of the threshold selects the direction (for those signed-threshold rules).** A
+   **positive** threshold is treated as an **upper bound** (activate when the monitored value has
+   risen to or past it), and a **negative** threshold is treated as a **lower bound** (activate when
+   the value has fallen to or past it). This one convention lets a single numeric setting express
+   both "too high" and "too low" limits.
 5. **A boolean trigger drives the action.** When the comparison is satisfied the rule returns
    `true`, and the engine then enforces the rule's configured `Action`.
 
@@ -144,20 +162,20 @@ its action fires. Unless noted as **strict**, numeric comparisons are **inclusiv
 | Rule | Monitored message | Extracted value | Threshold / window | Trigger condition | Notes |
 |------|-------------------|-----------------|--------------------|-------------------|-------|
 | **RiskCommissionRule** | Money `PositionChange` (only when it is a money change) | The currently reported `Commission` value | `Commission` (signed; `0` disables) | `> 0`: `value >= Commission`; `< 0`: `value <= Commission` | Compares the **current reported** value, not a running total. Zero is checked **first** → disabled. |
-| **RiskErrorRule** | `Error` | — (counts occurrences) | `Count` (occurrences) | `++count >= Count` | **Cumulative** error counter; never resets on success. `Count` cannot be negative. |
+| **RiskErrorRule** | `Error` | — (counts occurrences) | `Count` (occurrences) | `++count >= Count` | **Cumulative** error counter; never resets on success. `Count` cannot be negative; because the counter is pre-incremented, `Count == 0` (or `1`) activates on the **first** error rather than disabling the rule. |
 | **RiskOrderCommissionRule** | `Execution` carrying **order** info | Commission on each matching execution | `Commission` (signed; `0` disables) | `> 0`: `total >= Commission`; `< 0`: `total <= Commission` | **Accumulated total** of order-registration commission (see RiskTransactionCommissionRule). |
-| **RiskOrderErrorRule** | `Execution` | — (counts consecutive failures) | `Count` (consecutive failures) | `++streak >= Count` | **Consecutive** failures; a successful active-order execution resets the streak to 0. |
-| **RiskOrderFreqRule** *(worked example)* | `OrderRegister` / `OrderReplace` | Order count within a time window | `Count` (default **10**) within window `Interval` | `count >= Count` inside the current window | **Sliding window** anchored on the first order's time; window closes and restarts on trigger. Messages with no timestamp are ignored. `Count >= 1`. |
-| **RiskOrderPriceRule** | `OrderRegister` / `OrderReplace` | Order `Price` | `Price` | Register: `Price >= threshold`; Replace: `Price > 0` **and** `Price >= threshold` | Inclusive `>=`. |
-| **RiskOrderVolumeRule** | `OrderRegister` / `OrderReplace` | Order `Volume` | `Volume` | Register: `Volume >= threshold`; Replace: `Volume > 0` **and** `Volume >= threshold` | Inclusive `>=`. |
+| **RiskOrderErrorRule** | `Execution` | — (counts consecutive failures) | `Count` (consecutive failures) | `++streak >= Count` | **Consecutive** failures; a successful active-order execution resets the streak to 0. Because the streak is pre-incremented, `Count == 0` or `1` activates on the **first** failure. |
+| **RiskOrderFreqRule** *(worked example)* | `OrderRegister` / `OrderReplace` | Order count within a time window | `Count` (default **10**) within window `Interval` | `count >= Count` inside the current window | **Fixed window** anchored on the first order's time — its end (`time + Interval`) does **not** slide. The first order only **seeds** the window (count 1) and cannot trigger, so `Count == 1` still needs a later in-window order; the window closes on trigger, and an order at/after the end starts a fresh window. `Interval == 0` never triggers. Messages with no timestamp are ignored. `Count >= 1`. |
+| **RiskOrderPriceRule** | `OrderRegister` / `OrderReplace` | Order `Price` | `Price` | Register: `Price >= threshold`; Replace: `Price > 0` **and** `Price >= threshold` | Inclusive `>=`; no zero guard, so a threshold of `0` stays **active** — every registration matches, and a replacement matches when its new price is > 0. |
+| **RiskOrderVolumeRule** | `OrderRegister` / `OrderReplace` | Order `Volume` | `Volume` | Register: `Volume >= threshold`; Replace: `Volume > 0` **and** `Volume >= threshold` | Inclusive `>=`; no zero guard, so a threshold of `0` stays **active** — every registration matches, and a replacement matches when its new volume is > 0. |
 | **RiskPnLRule** *(worked example)* | Money `PositionChange` (only when it is a money change) | Current PnL (`CurrentValue`) | `PnL` (a `Unit`, Absolute or Relative; `0` never triggers) | Positive target: `PnL <= current`; negative limit: `PnL >= current` | **First observation seeds a baseline** and never triggers. Relative thresholds offset the baseline. |
 | **RiskPositionSizeRule** *(worked example)* | `PositionChange` (**no money filter**) | Position size (`CurrentValue`) | `Position` (signed; `0` disables) | `> 0`: `value >= Position` (long cap); `< 0`: `value <= Position` (short cap) | Watches **position size**, not money; negative thresholds are valid (short cap). |
-| **RiskPositionTimeRule** | `PositionChange` and `Time` | Time a position has been open | `Time` (a duration) | Position age `>= Time` | **Stateful**: tracks open time per (security, portfolio); closing the position (size back to 0) drops tracking. |
+| **RiskPositionTimeRule** | `PositionChange` and `Time` | Time a position has been open | `Time` (a duration) | Position age `>= Time` | **Stateful**: tracks open time per (security, portfolio); closing the position (size back to 0) drops tracking. The first non-zero observation only **seeds** the open time, so `Time == 0` does not disable — it fires on the next qualifying position/clock message. |
 | **RiskSlippageRule** *(worked example)* | `Execution` | `Slippage` | `Slippage` (signed; `0` disables) | `> 0`: `value > Slippage` (**strict**); `< 0`: `value < Slippage` (**strict**) | **Strict** `>` / `<` — unlike the inclusive `>=` used by the price/volume/commission rules. |
 | **RiskTradeCommissionRule** | `Execution` carrying **trade** info | Commission on each matching execution | `Commission` (signed; `0` disables) | `> 0`: `total >= Commission`; `< 0`: `total <= Commission` | **Accumulated total** of own-trade commission (see RiskTransactionCommissionRule). |
-| **RiskTradeFreqRule** | `Execution` carrying **trade** info | Trade count within a time window | `Count` (default **10**) within window `Interval` | `count >= Count` inside the current window | **Sliding window**, same mechanics as RiskOrderFreqRule. `Count >= 1`. |
-| **RiskTradePriceRule** | `Execution` carrying **trade** info | `TradePrice` | `Price` | `TradePrice >= Price` | Inclusive `>=`. |
-| **RiskTradeVolumeRule** | `Execution` carrying **trade** info | `TradeVolume` | `Volume` | `TradeVolume >= Volume` | Inclusive `>=`. |
+| **RiskTradeFreqRule** | `Execution` carrying **trade** info | Trade count within a time window | `Count` (default **10**) within window `Interval` | `count >= Count` inside the current window | **Fixed window**, same mechanics as RiskOrderFreqRule: the first trade seeds the window, its end does not slide, and `Interval == 0` never triggers. `Count >= 1`. |
+| **RiskTradePriceRule** | `Execution` carrying **trade** info | `TradePrice` | `Price` | `TradePrice >= Price` | Inclusive `>=`; no zero guard, so a threshold of `0` stays **active** for every qualifying trade. |
+| **RiskTradeVolumeRule** | `Execution` carrying **trade** info | `TradeVolume` | `Volume` | `TradeVolume >= Volume` | Inclusive `>=`; no zero guard, so a threshold of `0` stays **active** for every qualifying trade. |
 | **RiskTransactionCommissionRule** | `Execution` | Commission on each matching execution | `Commission` (signed; `0` disables) | `> 0`: `total >= Commission`; `< 0`: `total <= Commission` | **Abstract base** of the two commission-total rules above; accumulates a running total. Subclasses supply the match test. |
 
 ---
@@ -190,7 +208,8 @@ The rules are grouped here by the family they belong to (the grouping used in th
 - **RiskPositionTimeRule** — Tracks how long each position (per security and portfolio) has been
   open and fires once a position has been held for at least the configured `Time`, evaluated both
   when position changes arrive and when the clock advances; closing a position (size returning to 0)
-  stops tracking it.
+  stops tracking it. The first non-zero observation only seeds the open time, so a `Time` of `0`
+  does not disable the rule — it fires on the next qualifying position or clock message.
 
 #### Orders
 
@@ -199,15 +218,21 @@ The rules are grouped here by the family they belong to (the grouping used in th
   falls to a negative one (`total <= Commission`); a limit of `0` disables it.
 - **RiskOrderErrorRule** — Counts **consecutive** failed order executions and fires once the streak
   reaches `Count`; a successful execution that reports an active order resets the streak to zero
-  (contrast the cumulative RiskErrorRule).
+  (contrast the cumulative RiskErrorRule). Because the streak is pre-incremented, a `Count` of `0`
+  or `1` fires on the first failure rather than disabling the rule.
 - **RiskOrderFreqRule** *(worked example — see [§4.3](#43-riskorderfreqrule))* — Counts order
-  registrations and replacements inside a sliding time window of length `Interval` and fires when
-  the count reaches `Count` (default **10**) within that window; the window opens on the first
-  order and restarts after each trigger.
+  registrations and replacements inside a **fixed** time window of length `Interval`, anchored on
+  the first order (whose arrival only seeds the window and cannot itself trigger), and fires when
+  the count reaches `Count` (default **10**) while still inside that window; the window end does not
+  slide, it restarts after each trigger, and an order at or after the end opens a fresh window. A
+  `Count` of `1` therefore still needs a later in-window order, and an `Interval` of `0` never
+  triggers.
 - **RiskOrderPriceRule** — Fires when a submitted order's price reaches the `Price` threshold
   (`Price >= threshold`); for a replacement it also requires the new price to be strictly positive.
+  There is no zero guard, so a threshold of `0` leaves the rule active (every registration matches).
 - **RiskOrderVolumeRule** — Fires when a submitted order's volume reaches the `Volume` threshold
   (`Volume >= threshold`); for a replacement it also requires the new volume to be strictly positive.
+  There is no zero guard, so a threshold of `0` leaves the rule active (every registration matches).
 - **RiskSlippageRule** *(worked example — see [§4.4](#44-riskslippagerule))* — Reads the slippage on
   an execution and fires when it exceeds a positive limit (**strict** `value > Slippage`) or drops
   below a negative one (**strict** `value < Slippage`); a limit of `0` disables it. This is the one
@@ -215,19 +240,23 @@ The rules are grouped here by the family they belong to (the grouping used in th
 
 #### Trades
 
-- **RiskTradeFreqRule** — Counts own trades inside a sliding time window of length `Interval` and
+- **RiskTradeFreqRule** — Counts own trades inside a **fixed** time window of length `Interval` and
   fires when the count reaches `Count` (default **10**) within that window, using the same window
-  mechanics as RiskOrderFreqRule.
+  mechanics as RiskOrderFreqRule: the first trade only seeds the window, the end does not slide, and
+  an `Interval` of `0` never triggers.
 - **RiskTradePriceRule** — Fires when an own trade prints at a price that reaches the `Price`
-  threshold (`TradePrice >= Price`, inclusive).
+  threshold (`TradePrice >= Price`, inclusive). There is no zero guard, so a threshold of `0` leaves
+  the rule active for every qualifying trade.
 - **RiskTradeVolumeRule** — Fires when an own trade prints with a volume that reaches the `Volume`
-  threshold (`TradeVolume >= Volume`, inclusive).
+  threshold (`TradeVolume >= Volume`, inclusive). There is no zero guard, so a threshold of `0`
+  leaves the rule active for every qualifying trade.
 
 #### Errors
 
 - **RiskErrorRule** — Maintains a **cumulative** count of error notifications and fires once that
   count reaches `Count`; the count is not reset by success, only by an explicit reset (contrast the
-  consecutive RiskOrderErrorRule).
+  consecutive RiskOrderErrorRule). Because the counter is pre-incremented, a `Count` of `0` fires on
+  the first error rather than disabling the rule.
 
 #### Commission accumulation base
 
@@ -246,7 +275,7 @@ The rules are grouped here by the family they belong to (the grouping used in th
 
 The four rules below are written out in full, step by step, because they showcase the pattern
 variations that recur across the whole catalog: signed thresholds, a seeded baseline, absolute vs
-relative units, a sliding time window, and the one strict comparison.
+relative units, a fixed (first-event-anchored) time window, and the one strict comparison.
 
 ### 4.1 RiskPnLRule
 
@@ -298,26 +327,32 @@ this many short (negative cap); a cap of zero turns the check off."
 
 ### 4.3 RiskOrderFreqRule
 
-**Family:** Orders. **Watches:** how many orders are sent within a rolling time window.
+**Family:** Orders. **Watches:** how many orders are sent within a fixed, first-event-anchored time window.
 
 1. **Filter.** Only order **registrations** and **replacements** are counted. Any other message
    returns `false`.
 2. **Timestamp guard.** The message's local time is used as the clock. A message with a
    default/zero timestamp is ignored and returns `false`.
-3. **Open a window.** When no window is currently open, the arriving order opens one that ends at
-   `time + Interval`, sets the running count to `1`, and returns `false`.
-4. **Count within the window.** While the arriving order's time is still **inside** the current
-   window, the count is incremented. If the count reaches `Count` (**default 10**), the rule
-   **triggers** (returns `true`) and the window is **closed** so that counting restarts on the next
-   order.
-5. **Restart after the window elapses.** If the window has already elapsed, a **fresh** window is
-   started (end at `time + Interval`, count reset to `1`) and the rule returns `false`.
+3. **Open a window (seed only).** When no window is currently open, the arriving order opens one
+   whose end is fixed at `time + Interval`, sets the running count to `1`, and returns `false`. This
+   first order only **seeds** the window — the count is not yet compared against `Count`, so the
+   opening order can never trigger on its own (even when `Count == 1`).
+4. **Count within the window.** While a later order's time is still **inside** the current window
+   (the window end does **not** move as further orders arrive), the count is incremented. If the
+   count reaches `Count` (**default 10**), the rule **triggers** (returns `true`) and the window is
+   **closed** so that counting restarts on the next order.
+5. **Restart at or after the window end.** If the arriving order's time is at or after the window's
+   fixed end, a **fresh** window is started (end at `time + Interval`, count reset to `1`) and the
+   rule returns `false`.
 6. **Act.** On a trigger, the rule's configured action is enforced.
 
-`Count` must be at least `1`, and `Interval` must be non-negative.
+`Count` must be at least `1`, and `Interval` must be non-negative. Because the window end is fixed
+at the first order's `time + Interval` and never slides, an `Interval` of `0` leaves no room for a
+later order to fall inside the window, so the rule never triggers.
 
-*In business terms:* "Don't let me fire off more than N orders within any Interval-long burst; if I
-do, take my configured action and start counting the next burst fresh."
+*In business terms:* "Don't let me fire off more than N orders inside a fixed Interval-long window
+that starts with my first order; if I reach the limit before that window closes, take my configured
+action and start a fresh window on the next order."
 
 ### 4.4 RiskSlippageRule
 
@@ -361,9 +396,9 @@ common `RiskRule` base. These are described here once rather than repeated for e
   *PnL*, *Positions*, *Orders*, *Trades*, and *Strategy*). Several setters validate their input: the
   price, volume, and error-count settings reject negative values (a negative value would be
   meaningless there), the frequency rules require a count of at least one, and the duration settings
-  reject values below zero. By contrast, the commission, position-size, and PnL thresholds
-  intentionally **accept** negative values, because for those rules the sign selects the comparison
-  direction (see [§1](#1-how-every-rule-works-the-universal-pattern)).
+  reject values below zero. By contrast, the commission, position-size, slippage, and PnL thresholds
+  intentionally **accept** negative values, because for those signed-threshold rules the sign selects
+  the comparison direction (see [§1](#1-how-every-rule-works-the-universal-pattern)).
 - **Saving and restoring configuration.** Every rule can **save** its configured settings and
   **load** them back, so a configured rule set can be reproduced exactly. This is ordinary
   serialization of the rule's own settings (its action and thresholds); there is **no external data
@@ -384,4 +419,3 @@ common `RiskRule` base. These are described here once rather than repeated for e
 Together these shared behaviors mean every rule can be configured, labeled, saved, restored, and
 reset uniformly — while the trigger logic catalogued in [§3](#3-the-16-risk-rules) and
 [§4](#4-worked-examples) is what makes each rule distinct.
-

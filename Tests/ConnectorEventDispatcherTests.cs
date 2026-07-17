@@ -30,6 +30,12 @@ public class ConnectorEventDispatcherTests : BaseTestClass
 	// ===== Fixture =====
 
 	/// <summary>
+	/// Tracks every <see cref="Connector"/> constructed by the fixture so <see cref="DisposeConnectors"/>
+	/// can release each one after the test, ensuring the disposable façade under test never leaks.
+	/// </summary>
+	private readonly List<Connector> _connectors = [];
+
+	/// <summary>
 	/// Creates a bare <see cref="Connector"/> together with a standalone <see cref="ConnectorEventDispatcher"/>
 	/// bound to it, returning the dispatcher typed as the segregated <see cref="IConnectorEventDispatcher"/>
 	/// abstraction so the tests drive events exclusively through the interface surface under test.
@@ -44,12 +50,6 @@ public class ConnectorEventDispatcherTests : BaseTestClass
 	/// exercise that path, so a loose <see cref="Mock{T}"/> is a safe, never-invoked stand-in that keeps the
 	/// fixture free of adapters, storages and any data tier.
 	/// </remarks>
-	/// <summary>
-	/// Tracks every <see cref="Connector"/> constructed by the fixture so <see cref="DisposeConnectors"/>
-	/// can release each one after the test, ensuring the disposable façade under test never leaks.
-	/// </summary>
-	private readonly List<Connector> _connectors = [];
-
 	private (Connector connector, IConnectorEventDispatcher dispatcher) Create()
 		=> Create(new Mock<IConnectorSubscriptionManager>().Object);
 
@@ -73,24 +73,34 @@ public class ConnectorEventDispatcherTests : BaseTestClass
 	/// <summary>
 	/// Disposes every <see cref="Connector"/> the fixture created for the just-finished test. The façade is
 	/// an <see cref="IDisposable"/> <c>BaseLogReceiver</c>; disposing it releases its in/out message channels
-	/// and timers. Disposal faults are swallowed so they can never mask the real assertion outcome.
+	/// and timers. Every tracked façade is disposed even if an earlier one faults, and any disposal faults are
+	/// collected and re-thrown as an <see cref="AggregateException"/> so a teardown, channel or resource failure
+	/// stays visible instead of silently passing the test. MSTest aggregates this cleanup fault with any exception
+	/// the test body already threw, so a prior assertion failure is surfaced alongside it and is never masked.
 	/// </summary>
 	[TestCleanup]
 	public void DisposeConnectors()
 	{
+		List<Exception> disposeErrors = null;
+
 		foreach (var connector in _connectors)
 		{
 			try
 			{
 				connector.Dispose();
 			}
-			catch
+			catch (Exception ex)
 			{
-				// A disposal fault must never overwrite the real test result.
+				// Collect rather than swallow: every façade must still be disposed, but the fault
+				// must remain visible instead of silently passing the test.
+				(disposeErrors ??= []).Add(ex);
 			}
 		}
 
 		_connectors.Clear();
+
+		if (disposeErrors is not null)
+			throw new AggregateException("One or more tracked connectors failed to dispose during test cleanup.", disposeErrors);
 	}
 
 	/// <summary>

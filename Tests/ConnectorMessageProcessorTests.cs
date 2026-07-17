@@ -119,25 +119,35 @@ public class ConnectorMessageProcessorTests : BaseTestClass
 
 	/// <summary>
 	/// Disposes every façade created during the test (Issue-4 resource hygiene), guaranteeing the dual
-	/// In/Out <c>InMemoryMessageChannel</c> workers and internal timers are torn down. Disposal never
-	/// masks the assertion outcome.
+	/// In/Out <c>InMemoryMessageChannel</c> workers and internal timers are torn down. Every tracked façade is
+	/// disposed even if an earlier one faults, and any disposal faults are collected and re-thrown as an
+	/// <see cref="AggregateException"/> so a teardown, channel or resource failure stays visible instead of
+	/// silently passing the test. MSTest aggregates this cleanup fault with any exception the test body already
+	/// threw, so a prior assertion failure is surfaced alongside it and is never masked.
 	/// </summary>
 	[TestCleanup]
 	public void DisposeConnectors()
 	{
+		List<Exception> disposeErrors = null;
+
 		foreach (var connector in _connectors)
 		{
 			try
 			{
 				connector.Dispose();
 			}
-			catch
+			catch (Exception ex)
 			{
-				// A disposal fault must never overwrite the real test result.
+				// Collect rather than swallow: every façade must still be disposed, but the fault
+				// must remain visible instead of silently passing the test.
+				(disposeErrors ??= []).Add(ex);
 			}
 		}
 
 		_connectors.Clear();
+
+		if (disposeErrors is not null)
+			throw new AggregateException("One or more tracked connectors failed to dispose during test cleanup.", disposeErrors);
 	}
 
 	/// <summary>
