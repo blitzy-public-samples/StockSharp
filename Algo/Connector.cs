@@ -18,7 +18,11 @@ public partial class Connector : BaseLogReceiver, IConnector
 	// (ConnectorMessageProcessor) can read them through its back-reference to this facade.
 	// Access widening is behavior-neutral within the same assembly.
 	internal readonly EntityCache _entityCache;
-	internal readonly ConnectorSubscriptionManager _subscriptionManager;
+	// Field typed as the segregated abstraction (IConnectorSubscriptionManager) per the facade
+	// interface-segregation goal; the concrete ConnectorSubscriptionManager still backs it. Kept
+	// internal (not private) so the extracted components can reach the subscription seam through
+	// their back-reference to this facade. Retype is behavior-neutral (same instance, virtual dispatch).
+	internal readonly IConnectorSubscriptionManager _subscriptionManager;
 
 	// Extracted inbound-message handler component. The facade retains the OnProcessMessage
 	// dispatch switch and delegates each handler body to this component (composition/delegation),
@@ -69,7 +73,8 @@ public partial class Connector : BaseLogReceiver, IConnector
 
 		var transactionIdGenerator = new MillisecondIncrementalIdGenerator();
 
-		_subscriptionManager = new(this, transactionIdGenerator, UnsubscribeOnDisconnect);
+		// Explicit concrete type on the RHS: the field is now the interface, so target-typed new() cannot infer it.
+		_subscriptionManager = new ConnectorSubscriptionManager(this, transactionIdGenerator, UnsubscribeOnDisconnect);
 
 		_messageProcessor = new ConnectorMessageProcessor(this);
 
