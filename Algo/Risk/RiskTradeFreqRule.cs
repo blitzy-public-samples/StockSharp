@@ -3,6 +3,17 @@ namespace StockSharp.Algo.Risk;
 /// <summary>
 /// Risk-rule, tracking orders execution frequency.
 /// </summary>
+/// <remarks>
+/// Limits the frequency of own trades (executions). It counts <see cref="ExecutionMessage"/> messages that
+/// carry trade information (<c>HasTradeInfo()</c>) and activates when that running count reaches
+/// <see cref="Count"/> within a sliding <see cref="Interval"/> time window. Only
+/// <see cref="MessageTypes.Execution"/> messages representing own-trade fills are considered; all other
+/// message types are ignored. The first counted trade opens a window ending at <c>LocalTime + Interval</c>;
+/// each further trade arriving before the window closes increments the running count, and once
+/// <c>current &gt;= Count</c> (default 10) the rule fires, closes the current window, and begins counting
+/// afresh on the next trade. A trade arriving after the window has elapsed simply starts a new window.
+/// When the rule activates, the configured <see cref="RiskRule.Action"/> is enforced.
+/// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),
 	Name = LocalizedStrings.TradeFreqKey,
@@ -14,6 +25,10 @@ public class RiskTradeFreqRule : RiskRule
 	private int _current;
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Produces the display label by combining the configured <see cref="Count"/> and <see cref="Interval"/>
+	/// (formatted as <c>Count -&gt; Interval</c>).
+	/// </remarks>
 	protected override string GetTitle() => Count + " -> " + Interval;
 
 	private int _count = 10;
@@ -21,6 +36,10 @@ public class RiskTradeFreqRule : RiskRule
 	/// <summary>
 	/// Number of trades.
 	/// </summary>
+	/// <remarks>
+	/// Maximum number of own trades permitted within a single <see cref="Interval"/> window before the rule
+	/// activates. Must be at least 1 (the setter rejects lower values); defaults to 10.
+	/// </remarks>
 	[Display(
 		ResourceType = typeof(LocalizedStrings),
 		Name = LocalizedStrings.CountKey,
@@ -48,6 +67,10 @@ public class RiskTradeFreqRule : RiskRule
 	/// <summary>
 	/// Interval, during which trades quantity will be monitored.
 	/// </summary>
+	/// <remarks>
+	/// Length of the sliding time window over which trades are counted. Must be non-negative (the setter
+	/// rejects values below <c>TimeSpan.Zero</c>).
+	/// </remarks>
 	[Display(
 		ResourceType = typeof(LocalizedStrings),
 		Name = LocalizedStrings.IntervalKey,
@@ -71,6 +94,10 @@ public class RiskTradeFreqRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Clears the sliding-window state after invoking the base reset: the running trade count is set back to
+	/// zero and the open window is discarded, so counting restarts on the next qualifying trade.
+	/// </remarks>
 	public override void Reset()
 	{
 		base.Reset();
@@ -80,6 +107,17 @@ public class RiskTradeFreqRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Evaluated for every incoming <see cref="Message"/>. Messages whose type is not
+	/// <see cref="MessageTypes.Execution"/> are ignored, as are execution messages that do not carry trade
+	/// information (<c>HasTradeInfo()</c> is <see langword="false"/>) and messages with no local time
+	/// (default timestamp). For a qualifying own trade: when no window is open the trade opens one ending at
+	/// <c>LocalTime + Interval</c> and sets the running count to 1; when the trade falls within the current
+	/// window the running count is incremented and, as soon as <c>current &gt;= Count</c>, the rule closes the
+	/// window and returns <see langword="true"/> to activate; when the trade falls on or after the window end
+	/// a fresh window is opened with a running count of 1. All non-activating paths return
+	/// <see langword="false"/>.
+	/// </remarks>
 	public override bool ProcessMessage(Message message)
 	{
 		if (message.Type != MessageTypes.Execution)
@@ -133,6 +171,10 @@ public class RiskTradeFreqRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Persists this rule's configuration after the base settings: the <see cref="Count"/> and
+	/// <see cref="Interval"/> values are written to the supplied storage.
+	/// </remarks>
 	public override void Save(SettingsStorage storage)
 	{
 		base.Save(storage);
@@ -142,6 +184,10 @@ public class RiskTradeFreqRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Restores this rule's configuration after the base settings: the <see cref="Count"/> and
+	/// <see cref="Interval"/> values are read back from the supplied storage.
+	/// </remarks>
 	public override void Load(SettingsStorage storage)
 	{
 		base.Load(storage);

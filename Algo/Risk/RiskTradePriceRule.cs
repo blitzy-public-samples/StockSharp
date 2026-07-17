@@ -3,6 +3,12 @@ namespace StockSharp.Algo.Risk;
 /// <summary>
 /// Risk-rule, tracking trade price.
 /// </summary>
+/// <remarks>
+/// Follows the universal risk-rule pattern: it inspects incoming <see cref="MessageTypes.Execution"/> messages,
+/// ignores those that do not carry own-trade information, extracts the executed <see cref="ExecutionMessage.TradePrice"/>,
+/// and activates when that price is greater than or equal to (&gt;=) the configured <see cref="Price"/> threshold.
+/// When the rule activates, the configured <see cref="RiskRule.Action"/> is applied by the risk manager.
+/// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),
 	Name = LocalizedStrings.TradePriceKey,
@@ -15,6 +21,10 @@ public class RiskTradePriceRule : RiskRule
 	/// <summary>
 	/// Trade price.
 	/// </summary>
+	/// <remarks>
+	/// Inclusive own-trade price threshold. The rule activates when the executed trade price is
+	/// greater than or equal to (&gt;=) this value. Must be non-negative; the setter rejects negative values.
+	/// </remarks>
 	[Display(
 		ResourceType = typeof(LocalizedStrings),
 		Name = LocalizedStrings.PriceKey,
@@ -38,9 +48,19 @@ public class RiskTradePriceRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The title is the configured <see cref="Price"/> threshold formatted as a string.
+	/// </remarks>
 	protected override string GetTitle() => _price.To<string>();
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Returns <see langword="false"/> for any message whose <see cref="Message.Type"/> is not
+	/// <see cref="MessageTypes.Execution"/>, and for any <see cref="ExecutionMessage"/> that does not carry
+	/// trade information (<c>HasTradeInfo()</c> is <see langword="false"/>). For a qualifying own trade, the rule
+	/// activates (returns <see langword="true"/>) when <see cref="ExecutionMessage.TradePrice"/> is greater than
+	/// or equal to (&gt;=) the configured <see cref="Price"/> threshold.
+	/// </remarks>
 	public override bool ProcessMessage(Message message)
 	{
 		if (message.Type != MessageTypes.Execution)
@@ -55,6 +75,9 @@ public class RiskTradePriceRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Persists the <see cref="Price"/> threshold in addition to the base <see cref="RiskRule"/> settings.
+	/// </remarks>
 	public override void Save(SettingsStorage storage)
 	{
 		base.Save(storage);
@@ -63,6 +86,9 @@ public class RiskTradePriceRule : RiskRule
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Restores the <see cref="Price"/> threshold in addition to the base <see cref="RiskRule"/> settings.
+	/// </remarks>
 	public override void Load(SettingsStorage storage)
 	{
 		base.Load(storage);

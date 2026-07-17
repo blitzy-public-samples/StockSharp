@@ -3,6 +3,30 @@ namespace StockSharp.Algo.Risk;
 /// <summary>
 /// The message adapter, automatically controlling risk rules.
 /// </summary>
+/// <remarks>
+/// This wrapper consults the composed <see cref="IRiskManager"/> on both message directions:
+/// outbound messages travelling to the inner adapter through <see cref="OnSendInMessageAsync"/>,
+/// and inbound messages surfaced through <see cref="OnInnerAdapterNewOutMessageAsync"/>. Each
+/// message is offered to the manager's rules, and for every rule reported as triggered the rule's
+/// configured <see cref="RiskActions"/> value is enforced as a concrete effect on the message flow:
+/// <list type="bullet">
+/// <item><description>
+/// <see cref="RiskActions.ClosePositions"/> emits an <see cref="OrderGroupCancelMessage"/> in
+/// <see cref="OrderGroupCancelModes.ClosePositions"/> mode, delegating to the inner adapter to
+/// flatten open positions.
+/// </description></item>
+/// <item><description>
+/// <see cref="RiskActions.StopTrading"/> blocks trading: subsequent
+/// <see cref="MessageTypes.OrderRegister"/> and <see cref="MessageTypes.OrderReplace"/> messages
+/// are rejected with a failed execution (reason "trading disabled") instead of being forwarded,
+/// until a later message triggers no rules, at which point trading is automatically unblocked.
+/// </description></item>
+/// <item><description>
+/// <see cref="RiskActions.CancelOrders"/> emits a looped-back <see cref="OrderGroupCancelMessage"/>
+/// to cancel the active orders.
+/// </description></item>
+/// </list>
+/// </remarks>
 public class RiskMessageAdapter : MessageAdapterWrapper
 {
 	private readonly IRiskManager _riskManager;
@@ -13,6 +37,11 @@ public class RiskMessageAdapter : MessageAdapterWrapper
 	/// </summary>
 	/// <param name="innerAdapter">The adapter, to which messages will be directed.</param>
 	/// <param name="riskManager">Risk control manager.</param>
+	/// <remarks>
+	/// The supplied <paramref name="riskManager"/> is adopted as a child log source: its Parent is
+	/// set to this adapter when not already assigned, so risk-rule activations are reported through
+	/// this adapter's log hierarchy.
+	/// </remarks>
 	public RiskMessageAdapter(IMessageAdapter innerAdapter, IRiskManager riskManager)
 		: base(innerAdapter)
 	{
@@ -21,6 +50,16 @@ public class RiskMessageAdapter : MessageAdapterWrapper
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Outbound (send-in) path. While trading is blocked by a prior
+	/// <see cref="RiskActions.StopTrading"/> activation, incoming
+	/// <see cref="MessageTypes.OrderRegister"/> and <see cref="MessageTypes.OrderReplace"/>
+	/// messages are short-circuited: each <paramref name="message"/> is answered with a failed
+	/// <see cref="ExecutionMessage"/> (<see cref="OrderStates.Failed"/>, carrying the original
+	/// transaction id) and is not forwarded to the inner adapter. Otherwise the message is run
+	/// through risk processing; if a rule produces a replacement message it is sent in place of the
+	/// original before delegating to the base implementation.
+	/// </remarks>
 	protected override async ValueTask OnSendInMessageAsync(Message message, CancellationToken cancellationToken)
 	{
 		// Check if trading is blocked and reject order registration/modification
@@ -68,6 +107,12 @@ public class RiskMessageAdapter : MessageAdapterWrapper
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Inbound (new-out) path. Every <paramref name="message"/> except
+	/// <see cref="MessageTypes.Reset"/> is run through risk processing; if a rule produces a
+	/// message it is looped back into this adapter and raised as a new outgoing message before the
+	/// original message is passed to the base implementation.
+	/// </remarks>
 	protected override async ValueTask OnInnerAdapterNewOutMessageAsync(Message message, CancellationToken cancellationToken)
 	{
 		if (message.Type != MessageTypes.Reset)
@@ -133,6 +178,10 @@ public class RiskMessageAdapter : MessageAdapterWrapper
 	/// Create a copy of <see cref="RiskMessageAdapter"/>.
 	/// </summary>
 	/// <returns>Copy.</returns>
+	/// <remarks>
+	/// Both the wrapped inner adapter and the composed <see cref="IRiskManager"/> are cloned, so the
+	/// copy controls risk independently of this instance.
+	/// </remarks>
 	public override IMessageAdapter Clone()
 	{
 		return new RiskMessageAdapter(InnerAdapter.TypedClone(), _riskManager.Clone());
