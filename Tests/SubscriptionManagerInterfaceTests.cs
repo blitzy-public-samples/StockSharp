@@ -1,0 +1,376 @@
+namespace StockSharp.Tests;
+
+/// <summary>
+/// Interface-level coverage for <see cref="IConnectorSubscriptionManager"/>, the subscription-management
+/// seam extracted from the <see cref="Connector"/> god object.
+/// </summary>
+/// <remarks>
+/// Every test drives the manager through the <see cref="IConnectorSubscriptionManager"/> abstraction rather
+/// than the concrete <see cref="ConnectorSubscriptionManager"/> type, so the extracted contract itself is
+/// exercised. Behavioral parity with the concrete implementation is guaranteed elsewhere; this class
+/// deliberately emphasizes the interface members that <c>SubscriptionManagerConnectorTests</c> does not
+/// already cover (connection/restore properties, <see cref="IConnectorSubscriptionManager.UnSubscribeAll"/>,
+/// both <c>HandleConnected</c> overloads, <see cref="IConnectorSubscriptionManager.ProcessLookupResponse{T}"/>
+/// and <see cref="IConnectorSubscriptionManager.UpdateCandles"/>), while smoke-testing the shared members
+/// once through the abstraction.
+/// </remarks>
+[TestClass]
+public class SubscriptionManagerInterfaceTests : BaseTestClass
+{
+	private sealed class TestReceiver : TestLogReceiver { }
+
+	#region Helpers
+
+	/// <summary>
+	/// Create a manager but expose it as the <see cref="IConnectorSubscriptionManager"/> abstraction so that
+	/// every subsequent call in a test goes through the interface, not the concrete type.
+	/// </summary>
+	private static IConnectorSubscriptionManager CreateManager(bool sendUnsubscribeWhenDisconnected = true)
+		=> new ConnectorSubscriptionManager(new TestReceiver(), new IncrementalIdGenerator(), sendUnsubscribeWhenDisconnected);
+
+	private static Subscription CreateTickSubscription()
+		=> new(new MarketDataMessage
+		{
+			IsSubscribe = true,
+			SecurityId = Helper.CreateSecurityId(),
+			DataType2 = DataType.Ticks,
+		});
+
+	private static Subscription CreateCandleSubscription()
+		=> new(new MarketDataMessage
+		{
+			IsSubscribe = true,
+			SecurityId = Helper.CreateSecurityId(),
+			DataType2 = TimeSpan.FromMinutes(1).TimeFrame(),
+		});
+
+	private static Subscription CreateOrderStatusSubscription()
+		=> new(new OrderStatusMessage { IsSubscribe = true });
+
+	/// <summary>
+	/// A security-lookup subscription resolves to <see cref="DataType.Securities"/>, which causes the manager
+	/// to allocate a lookup-item buffer, so it is a valid target for <see cref="IConnectorSubscriptionManager.ProcessLookupResponse{T}"/>.
+	/// </summary>
+	private static Subscription CreateLookupSubscription()
+		=> new(new SecurityLookupMessage());
+
+	/// <summary>
+	/// Subscribe and process a success response so the subscription becomes <see cref="SubscriptionStates.Active"/>.
+	/// </summary>
+	private static long SubscribeAndActivate(IConnectorSubscriptionManager manager, Subscription subscription)
+	{
+		manager.Subscribe(subscription);
+		var transId = subscription.TransactionId;
+
+		manager.ProcessResponse(
+			new SubscriptionResponseMessage { OriginalTransactionId = transId },
+			out _, out _, out _);
+
+		return transId;
+	}
+
+	/// <summary>
+	/// Build a data message carrying the specified subscription ids (mirrors the pattern file helper).
+	/// </summary>
+	private static ISubscriptionIdMessage CreateDataMessage(params long[] subscriptionIds)
+	{
+		var msg = new ExecutionMessage
+		{
+			DataTypeEx = DataType.Ticks,
+			ServerTime = DateTime.UtcNow,
+		};
+		msg.SetSubscriptionIds(subscriptionIds);
+		return msg;
+	}
+
+	#endregion
+
+	#region Property / contract surface
+
+	[TestMethod]
+	public void SendUnsubscribeWhenDisconnected_ReflectsCtorFlag()
+	{
+		var enabled = CreateManager(sendUnsubscribeWhenDisconnected: true);
+		enabled.SendUnsubscribeWhenDisconnected.AssertTrue();
+
+		var disabled = CreateManager(sendUnsubscribeWhenDisconnected: false);
+		disabled.SendUnsubscribeWhenDisconnected.AssertFalse();
+	}
+
+	[TestMethod]
+	public void ConnectionState_DefaultDisconnected_AndSettable()
+	{
+		var manager = CreateManager();
+
+		manager.ConnectionState.AssertEqual(ConnectionStates.Disconnected);
+
+		manager.ConnectionState = ConnectionStates.Connected;
+		manager.ConnectionState.AssertEqual(ConnectionStates.Connected);
+	}
+
+	[TestMethod]
+	public void IsRestoreSubscriptionOnNormalReconnect_DefaultTrue_AndSettable()
+	{
+		var manager = CreateManager();
+
+		manager.IsRestoreSubscriptionOnNormalReconnect.AssertTrue();
+
+		manager.IsRestoreSubscriptionOnNormalReconnect = false;
+		manager.IsRestoreSubscriptionOnNormalReconnect.AssertFalse();
+	}
+
+	[TestMethod]
+	public void TransactionIdGenerator_ReturnsInjected_AndSettable()
+	{
+		var generator = new IncrementalIdGenerator();
+		IConnectorSubscriptionManager manager = new ConnectorSubscriptionManager(new TestReceiver(), generator, true);
+
+		ReferenceEquals(manager.TransactionIdGenerator, generator).AssertTrue("Getter must return the injected generator");
+
+		var replacement = new IncrementalIdGenerator();
+		manager.TransactionIdGenerator = replacement;
+		ReferenceEquals(manager.TransactionIdGenerator, replacement).AssertTrue("Setter must store the new generator");
+	}
+
+	[TestMethod]
+	public void FreshManager_HasNoSubscriptions()
+	{
+		var manager = CreateManager();
+
+		manager.Subscriptions.Count().AssertEqual(0, "Fresh manager must have no active subscriptions");
+		manager.SubscriptionsOnConnect.Count.AssertEqual(0, "Fresh manager must have no on-connect subscriptions");
+	}
+
+	#endregion
+
+	#region Uncovered interface methods
+
+	[TestMethod]
+	public void Subscribe_ThroughInterface_AssignsTransactionId_AndSendsRequest()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		var actions = manager.Subscribe(subscription);
+
+		subscription.TransactionId.AssertNotEqual(0);
+		actions.Items.Length.AssertEqual(1);
+		actions.Items[0].Type.AssertEqual(ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage);
+
+		var sent = (MarketDataMessage)actions.Items[0].Message;
+		sent.TransactionId.AssertEqual(subscription.TransactionId);
+	}
+
+	[TestMethod]
+	public void Subscribe_OrderStatus_ThroughInterface_ProducesAddOrderStatusAction()
+	{
+		var manager = CreateManager();
+		var subscription = CreateOrderStatusSubscription();
+
+		var actions = manager.Subscribe(subscription);
+
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.AssertEqual(1, "Order-status subscribe should still send the request");
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.AddOrderStatus)
+			.AssertEqual(1, "Order-status subscribe should register the order-status transaction id");
+	}
+
+	[TestMethod]
+	public void UnSubscribeAll_UnsubscribesEveryActiveSubscription()
+	{
+		var manager = CreateManager();
+
+		var first = CreateTickSubscription();
+		var second = CreateTickSubscription();
+
+		SubscribeAndActivate(manager, first);
+		SubscribeAndActivate(manager, second);
+
+		var activeCount = manager.Subscriptions.Count(s => s.State == SubscriptionStates.Active);
+		activeCount.AssertEqual(2);
+
+		var actions = manager.UnSubscribeAll();
+
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.AssertEqual(activeCount, "UnSubscribeAll should send one unsubscribe request per active subscription");
+	}
+
+	[TestMethod]
+	public void HandleConnected_Array_FirstConnect_SubscribesDefaults()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		var actions = manager.HandleConnected([subscription]);
+
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.AssertEqual(1, "First connect should subscribe the provided default subscription");
+
+		var sent = (MarketDataMessage)actions.Items
+			.First(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage).Message;
+		sent.TransactionId.AssertEqual(subscription.TransactionId);
+	}
+
+	[TestMethod]
+	public void HandleConnected_Array_Reconnect_WithRestoreDisabled_ReturnsEmpty()
+	{
+		var manager = CreateManager();
+		manager.IsRestoreSubscriptionOnNormalReconnect = false;
+
+		// First connect flips the internal "was connected" flag without producing actions.
+		manager.HandleConnected([]);
+
+		// A subsequent reconnect with restore disabled must produce no actions at all.
+		var actions = manager.HandleConnected([CreateTickSubscription()]);
+
+		actions.Items.Length.AssertEqual(0, "Reconnect with restore disabled must be a no-op");
+	}
+
+	[TestMethod]
+	public void HandleConnected_Filter_SubscribesMatchingSubscriptionsOnConnect()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		manager.SubscriptionsOnConnect.Add(subscription);
+
+		var actions = manager.HandleConnected(s => ReferenceEquals(s, subscription));
+
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.AssertEqual(1, "Filter overload should subscribe the matching SubscriptionsOnConnect entry");
+	}
+
+	[TestMethod]
+	public void HandleConnected_Filter_Null_Throws()
+	{
+		var manager = CreateManager();
+
+		ThrowsExactly<ArgumentNullException>(() => manager.HandleConnected((Func<Subscription, bool>)null));
+	}
+
+	[TestMethod]
+	public void HandleConnected_Array_Null_Throws()
+	{
+		var manager = CreateManager();
+
+		ThrowsExactly<ArgumentNullException>(() => manager.HandleConnected((Subscription[])null));
+	}
+
+	[TestMethod]
+	public void ProcessLookupResponse_CollectsItem_ForLookupSubscription()
+	{
+		var manager = CreateManager();
+		var subscription = CreateLookupSubscription();
+
+		manager.Subscribe(subscription);
+		var transId = subscription.TransactionId;
+
+		var carrier = CreateDataMessage(transId);
+		var item = new SecurityMessage { SecurityId = Helper.CreateSecurityId() };
+
+		var affected = manager.ProcessLookupResponse(carrier, item).ToArray();
+
+		affected.Any(s => s.TransactionId == transId)
+			.AssertTrue("Lookup subscription should receive the response item");
+	}
+
+	[TestMethod]
+	public void ProcessLookupResponse_UnknownId_ReturnsEmpty()
+	{
+		var manager = CreateManager();
+
+		var carrier = CreateDataMessage(4242);
+		var affected = manager.ProcessLookupResponse(carrier, new SecurityMessage()).ToArray();
+
+		affected.Length.AssertEqual(0, "Unknown subscription id must not resolve to any subscription");
+	}
+
+	[TestMethod]
+	public void UpdateCandles_ReturnsSubscription_ForKnownCandle()
+	{
+		var manager = CreateManager();
+		var subscription = CreateCandleSubscription();
+		var transId = SubscribeAndActivate(manager, subscription);
+
+		var candle = new TimeFrameCandleMessage
+		{
+			OpenTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+		};
+		candle.SetSubscriptionIds([transId]);
+
+		var updated = manager.UpdateCandles(candle).ToArray();
+
+		updated.Any(t => t.subscription.TransactionId == transId)
+			.AssertTrue("Known candle subscription should be returned with its candle");
+	}
+
+	[TestMethod]
+	public void UpdateCandles_UnknownId_ReturnsEmpty()
+	{
+		var manager = CreateManager();
+
+		var candle = new TimeFrameCandleMessage
+		{
+			OpenTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+		};
+		candle.SetSubscriptionIds([9999]);
+
+		manager.UpdateCandles(candle).Count().AssertEqual(0, "Unknown candle subscription id must yield no updates");
+	}
+
+	#endregion
+
+	#region Interface pass-through smoke tests
+
+	[TestMethod]
+	public void Lifecycle_Active_Online_Finished_ThroughInterface()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		var transId = SubscribeAndActivate(manager, subscription);
+		subscription.State.AssertEqual(SubscriptionStates.Active);
+
+		var online = manager.ProcessSubscriptionOnlineMessage(
+			new SubscriptionOnlineMessage { OriginalTransactionId = transId }, out _);
+		IsNotNull(online);
+		subscription.State.AssertEqual(SubscriptionStates.Online);
+
+		var finished = manager.ProcessSubscriptionFinishedMessage(
+			new SubscriptionFinishedMessage { OriginalTransactionId = transId }, out _);
+		IsNotNull(finished);
+		subscription.State.AssertEqual(SubscriptionStates.Finished);
+
+		manager.Subscriptions.Count(s => s.TransactionId == transId)
+			.AssertEqual(0, "Finished subscription should be removed");
+	}
+
+	[TestMethod]
+	public void Interface_Exposes_Query_And_Cache_Members()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+		var transId = SubscribeAndActivate(manager, subscription);
+
+		// GetSubscriptions resolves ids through the interface.
+		manager.GetSubscriptions(CreateDataMessage(transId))
+			.Count(s => s.TransactionId == transId)
+			.AssertEqual(1);
+
+		// TryGetSubscription returns the live subscription.
+		var found = manager.TryGetSubscription(transId, ignoreAll: false, remove: false, time: null);
+		IsNotNull(found);
+		found.TransactionId.AssertEqual(transId);
+
+		// GetSubscribers exposes the active subscription's security.
+		manager.GetSubscribers(DataType.Ticks)
+			.Contains(subscription.SecurityId.Value)
+			.AssertTrue("Active tick subscription's security should be reported");
+
+		// ClearCache empties the manager.
+		manager.ClearCache();
+		manager.Subscriptions.Count().AssertEqual(0, "ClearCache should remove all subscriptions");
+	}
+
+	#endregion
+}
