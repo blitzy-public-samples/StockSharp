@@ -175,6 +175,69 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 			.AssertEqual(1, "Order-status subscribe should register the order-status transaction id");
 	}
 
+	/// <summary>
+	/// The single-subscription <see cref="IConnectorSubscriptionManager.UnSubscribe(Subscription)"/> overload,
+	/// driven through the interface, must emit exactly one outbound unsubscribe request that references the
+	/// original subscribe transaction id and carries a fresh transaction id of its own.
+	/// </summary>
+	[TestMethod]
+	public void UnSubscribe_ThroughInterface_SendsUnsubscribeRequest()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		var subscribeId = SubscribeAndActivate(manager, subscription);
+
+		var actions = manager.UnSubscribe(subscription);
+
+		var sendItems = actions.Items
+			.Where(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.ToArray();
+		sendItems.Length.AssertEqual(1, "UnSubscribe should send exactly one unsubscribe request");
+
+		var sent = (MarketDataMessage)sendItems[0].Message;
+		sent.IsSubscribe.AssertFalse("Unsubscribe request must have IsSubscribe == false");
+		sent.OriginalTransactionId.AssertEqual(subscribeId,
+			"Unsubscribe request must reference the original subscribe transaction id");
+		sent.TransactionId.AssertNotEqual(0, "Unsubscribe request must carry a fresh transaction id");
+		sent.TransactionId.AssertNotEqual(subscribeId,
+			"Unsubscribe request must use a new transaction id, not the subscribe id");
+	}
+
+	/// <summary>
+	/// When <see cref="IConnectorSubscriptionManager.SendUnsubscribeWhenDisconnected"/> is <see langword="false"/>
+	/// and the manager is disconnected, unsubscribing through the interface must remove the subscription locally
+	/// without emitting any outbound request.
+	/// </summary>
+	[TestMethod]
+	public void UnSubscribe_ThroughInterface_WhenDisconnected_RemovesLocallyWithoutSending()
+	{
+		var manager = CreateManager(sendUnsubscribeWhenDisconnected: false);
+		manager.ConnectionState = ConnectionStates.Disconnected;
+
+		var subscription = CreateTickSubscription();
+		var transId = SubscribeAndActivate(manager, subscription);
+
+		var actions = manager.UnSubscribe(subscription);
+
+		actions.Items.Count(i => i.Type == ConnectorSubscriptionManager.Actions.Item.Types.SendInMessage)
+			.AssertEqual(0, "Disconnected unsubscribe with SendUnsubscribeWhenDisconnected=false must not send a request");
+
+		manager.Subscriptions.Count(s => s.TransactionId == transId)
+			.AssertEqual(0, "Subscription should be removed locally when unsubscribing while disconnected");
+	}
+
+	/// <summary>
+	/// <see cref="IConnectorSubscriptionManager.UnSubscribe(Subscription)"/> must reject a <see langword="null"/> subscription.
+	/// </summary>
+	[TestMethod]
+	public void UnSubscribe_Null_Throws()
+	{
+		var manager = CreateManager();
+
+		ThrowsExactly<ArgumentNullException>(() => manager.UnSubscribe(null));
+	}
+
 	[TestMethod]
 	public void UnSubscribeAll_UnsubscribesEveryActiveSubscription()
 	{
