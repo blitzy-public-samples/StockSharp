@@ -408,6 +408,111 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 
 	#endregion
 
+	#region ProcessResponse error / unexpected-cancel branch
+
+	/// <summary>
+	/// The failure branch of <see cref="IConnectorSubscriptionManager.ProcessResponse"/>: when an
+	/// <em>already-active</em> subscription receives a <see cref="SubscriptionResponseMessage"/> carrying an
+	/// <see cref="SubscriptionResponseMessage.Error"/>, the manager must surface the original subscribe request
+	/// through <c>originalMsg</c>, report the cancellation as <em>unexpected</em> (because the subscription was
+	/// active), return an empty <c>items</c> buffer (a ticks subscription buffers no lookup items) and move the
+	/// subscription into <see cref="SubscriptionStates.Error"/>, removing it from the active set. This is the
+	/// negative counterpart to the success path exercised by every other test via <c>SubscribeAndActivate</c>.
+	/// </summary>
+	[TestMethod]
+	public void ProcessResponse_ErrorAfterActivation_ReportsUnexpectedCancelledWithOriginalMessage()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		var transId = SubscribeAndActivate(manager, subscription);
+		subscription.State.AssertEqual(SubscriptionStates.Active, "Pre-condition: subscription must be active before the error");
+
+		var error = new InvalidOperationException("subscription failed");
+
+		var returned = manager.ProcessResponse(
+			new SubscriptionResponseMessage { OriginalTransactionId = transId, Error = error },
+			out var originalMsg, out var unexpectedCancelled, out var items);
+
+		// The active subscription is the one returned.
+		returned.AssertSame(subscription);
+
+		// The original subscribe request is surfaced for the caller.
+		originalMsg.AssertNotNull();
+		originalMsg.TransactionId.AssertEqual(transId, "originalMsg must be the original subscribe request");
+		originalMsg.IsSubscribe.AssertTrue("originalMsg must be a subscribe request");
+
+		// Because the subscription was already active, its cancellation is unexpected.
+		unexpectedCancelled.AssertTrue("An active subscription cancelled by error is an unexpected cancellation");
+
+		// A ticks subscription buffers no lookup items, so the drained buffer is empty (never null).
+		items.AssertNotNull();
+		items.Length.AssertEqual(0, "A non-lookup subscription must drain an empty item buffer");
+
+		// The subscription transitions to the error state and is removed from the active set.
+		subscription.State.AssertEqual(SubscriptionStates.Error);
+		manager.Subscriptions.Count(s => s.TransactionId == transId)
+			.AssertEqual(0, "An errored subscription must be removed from the active set");
+	}
+
+	/// <summary>
+	/// The failure branch when the subscription has <em>not yet been activated</em>: an error response for a
+	/// freshly-subscribed (still <see cref="SubscriptionStates.Stopped"/>) subscription must still surface the
+	/// original request and return the subscription, but the cancellation is <em>not</em> unexpected because the
+	/// subscription was never active. This distinguishes the <c>unexpectedCancelled</c> flag's two outcomes.
+	/// </summary>
+	[TestMethod]
+	public void ProcessResponse_ErrorBeforeActivation_IsNotUnexpectedCancelled()
+	{
+		var manager = CreateManager();
+		var subscription = CreateTickSubscription();
+
+		manager.Subscribe(subscription);
+		var transId = subscription.TransactionId;
+		subscription.State.AssertNotEqual(SubscriptionStates.Active, "Pre-condition: subscription must not be active yet");
+
+		var error = new InvalidOperationException("rejected before activation");
+
+		var returned = manager.ProcessResponse(
+			new SubscriptionResponseMessage { OriginalTransactionId = transId, Error = error },
+			out var originalMsg, out var unexpectedCancelled, out var items);
+
+		returned.AssertSame(subscription);
+		originalMsg.AssertNotNull();
+		originalMsg.TransactionId.AssertEqual(transId);
+
+		// Never active, so cancelling it is expected — the flag must be false.
+		unexpectedCancelled.AssertFalse("A never-active subscription cancelled by error is not an unexpected cancellation");
+
+		items.AssertNotNull();
+		items.Length.AssertEqual(0);
+		subscription.State.AssertEqual(SubscriptionStates.Error);
+	}
+
+	/// <summary>
+	/// When the response references an unknown original transaction id, <c>ProcessResponse</c> must return
+	/// <see langword="null"/> with a <see langword="null"/> <c>originalMsg</c>, a <see langword="false"/>
+	/// <c>unexpectedCancelled</c> and an empty (never <see langword="null"/>) <c>items</c> buffer — the safe
+	/// no-match contract that the connector relies on to raise a bare error event without touching subscriptions.
+	/// </summary>
+	[TestMethod]
+	public void ProcessResponse_UnknownOriginalId_ReturnsNullWithEmptyOutParams()
+	{
+		var manager = CreateManager();
+
+		var returned = manager.ProcessResponse(
+			new SubscriptionResponseMessage { OriginalTransactionId = 987654321, Error = new InvalidOperationException("boom") },
+			out var originalMsg, out var unexpectedCancelled, out var items);
+
+		IsNull(returned);
+		IsNull(originalMsg);
+		unexpectedCancelled.AssertFalse();
+		items.AssertNotNull();
+		items.Length.AssertEqual(0);
+	}
+
+	#endregion
+
 	#region Interface pass-through smoke tests
 
 	[TestMethod]
