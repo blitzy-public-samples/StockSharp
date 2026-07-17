@@ -4,12 +4,13 @@ namespace StockSharp.Algo.Risk;
 /// Risk-rule, tracking trade volume.
 /// </summary>
 /// <remarks>
-/// Applies the universal risk-rule pattern to own-trade executions: it inspects incoming
-/// <see cref="MessageTypes.Execution"/> messages, keeps only those that carry trade information
-/// (an <see cref="ExecutionMessage"/> describing a completed own trade), extracts the executed trade
-/// volume, and activates when that volume is greater than or equal to (&gt;=) the configured
-/// <see cref="Volume"/> threshold. On activation the configured <see cref="RiskRule.Action"/>
-/// (for example, cancel orders, stop trading, or close positions) is enforced by the risk manager.
+/// A value-threshold risk rule (see <see cref="RiskRule"/> for the shared contract) applied to own-trade
+/// executions: it inspects incoming <see cref="MessageTypes.Execution"/> messages, keeps only those that
+/// carry trade information (an <see cref="ExecutionMessage"/> describing a completed own trade), extracts the
+/// executed trade volume, and activates when that volume is greater than or equal to (&gt;=) the configured
+/// <see cref="Volume"/> threshold. On activation <see cref="IRiskManager"/> reports the rule as triggered and
+/// its configured <see cref="RiskRule.Action"/> (for example, cancel orders, stop trading, or close positions)
+/// is enforced downstream by <see cref="RiskMessageAdapter"/> (or the calling code), not by the manager itself.
 /// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),

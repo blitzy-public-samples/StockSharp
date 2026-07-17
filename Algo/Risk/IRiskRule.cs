@@ -4,15 +4,18 @@ namespace StockSharp.Algo.Risk;
 /// The interface, describing risk-rule.
 /// </summary>
 /// <remarks>
-/// Concrete rules follow a single, uniform strategy: each rule filters on a specific message type,
-/// extracts a monitored value from that message, treats a zero threshold as "disabled", uses the sign
-/// of the configured threshold to select the comparison direction (a positive upper bound versus a
-/// negative lower bound), and returns a boolean trigger indicating whether the rule activated. When a
-/// rule activates, the response it carries in <see cref="Action"/> - one of <see cref="RiskActions"/>
-/// (close positions, stop trading, or cancel orders) - is enforced downstream by
-/// <see cref="RiskMessageAdapter"/>. Rules are aggregated and evaluated together by
-/// <see cref="IRiskManager"/>, and the contract is persistable through the base
-/// <see cref="IPersistable"/> so configured thresholds survive save/load round-trips.
+/// Defines the contract shared by every risk rule. A rule evaluates inbound messages through
+/// <see cref="ProcessMessage"/> and returns <see langword="true"/> when its own condition is met
+/// (the rule "activates"); it carries the response to take on activation in <see cref="Action"/> -
+/// one of <see cref="RiskActions"/> (close positions, stop trading, or cancel orders); it can clear
+/// its accumulated runtime state through <see cref="Reset"/>; and it is persistable through the base
+/// <see cref="IPersistable"/> so configured thresholds survive save/load round-trips. What a rule
+/// monitors is rule-specific rather than universal: the message type it inspects, the value it
+/// extracts, whether a zero threshold disables it, and how a threshold sign or time window is
+/// interpreted all vary by concrete rule and are documented on that rule. <see cref="IRiskManager"/>
+/// aggregates the rules, evaluates them together, and returns those that activated; the carried
+/// <see cref="Action"/> is then enforced downstream by <see cref="RiskMessageAdapter"/> (or the
+/// calling code), not by the manager itself.
 /// </remarks>
 public interface IRiskRule : IPersistable
 {
@@ -36,7 +39,7 @@ public interface IRiskRule : IPersistable
 	/// To reset the state.
 	/// </summary>
 	/// <remarks>
-	/// Clears any runtime or accumulated state (counters, sliding windows, seeded baselines) so evaluation restarts cleanly; the configured thresholds are unaffected.
+	/// Clears any runtime or accumulated state (counters, window/counter state, seeded baselines) so evaluation restarts cleanly; the configured thresholds are unaffected.
 	/// </remarks>
 	void Reset();
 
@@ -46,7 +49,8 @@ public interface IRiskRule : IPersistable
 	/// <remarks>
 	/// Evaluates a single inbound <paramref name="message"/> and returns <see langword="true"/> only when the rule's
 	/// condition is met on this message; <see cref="IRiskManager"/> collects every rule that returns
-	/// <see langword="true"/> and enforces their configured actions.
+	/// <see langword="true"/> and returns them to its caller, and each activated rule's configured action is
+	/// then enforced downstream by <see cref="RiskMessageAdapter"/> (or the calling code).
 	/// </remarks>
 	/// <param name="message">The trade message.</param>
 	/// <returns><see langword="true" />, if the rule is activated, otherwise, <see langword="false" />.</returns>

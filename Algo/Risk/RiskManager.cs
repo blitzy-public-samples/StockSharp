@@ -32,8 +32,8 @@ public class RiskManager : BaseLogReceiver, IRiskManager
 	/// <inheritdoc />
 	/// <remarks>
 	/// Resets the runtime state of every configured rule by delegating to each rule's own
-	/// <see cref="IRiskRule.Reset"/>, clearing accumulated tracking (such as rolling counters or sliding time
-	/// windows) while leaving the configured rules and their settings in place.
+	/// <see cref="IRiskRule.Reset"/>, clearing accumulated tracking (such as counter or window state) while
+	/// leaving the configured rules and their settings in place.
 	/// </remarks>
 	public virtual void Reset()
 	{

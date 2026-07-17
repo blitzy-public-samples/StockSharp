@@ -4,13 +4,14 @@ namespace StockSharp.Algo.Risk;
 /// Risk-rule, tracking orders error count.
 /// </summary>
 /// <remarks>
-/// Follows the universal risk-rule pattern described on <see cref="RiskRule"/>: it filters
-/// <see cref="MessageTypes.Execution"/> messages and tracks the number of consecutive failed order
-/// executions rather than a cumulative total. An error-free execution report (<c>IsOk()</c>) that carries
+/// A consecutive-failure risk rule (see <see cref="RiskRule"/> for the shared contract): it filters
+/// <see cref="MessageTypes.Execution"/> messages and tracks the number of consecutive failed execution
+/// messages rather than a cumulative total. An error-free execution report (<c>IsOk()</c>) that also carries
 /// order information (<c>HasOrderInfo()</c>) and reports the <see cref="OrderStates.Active"/> state clears the
-/// running streak; any other error-free execution leaves the streak unchanged. An execution that reports an
-/// error increments the streak, and the rule activates once the streak reaches or exceeds <see cref="Count"/>
-/// (<c>current &gt;= Count</c>). On activation the configured <see cref="RiskRule.Action"/> is enforced.
+/// running streak; any other error-free execution leaves the streak unchanged. Every execution message that
+/// is not error-free increments the streak, and the rule activates once the streak reaches or exceeds
+/// <see cref="Count"/> (<c>current &gt;= Count</c>). On activation the configured
+/// <see cref="RiskRule.Action"/> is enforced.
 /// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),

@@ -408,7 +408,7 @@ partial class Connector
 	/// To call the event <see cref="Error"/>.
 	/// </summary>
 	/// <param name="exception">Data processing error.</param>
-	protected internal void RaiseError(Exception exception)
+	protected void RaiseError(Exception exception)
 	{
 		if (exception is null)
 			throw new ArgumentNullException(nameof(exception));
@@ -420,8 +420,15 @@ partial class Connector
 	}
 
 	/// <summary>
+	/// Invokes <see cref="RaiseError"/> on behalf of the extracted message-processing component,
+	/// preserving the protected visibility of the raiser on the facade rather than widening it.
 	/// </summary>
-	protected internal virtual void RaiseSubscriptionFailed(Subscription subscription, Exception error, bool isSubscribe)
+	/// <param name="exception">Data processing error.</param>
+	internal void RaiseErrorCore(Exception exception) => RaiseError(exception);
+
+	/// <summary>
+	/// </summary>
+	protected virtual void RaiseSubscriptionFailed(Subscription subscription, Exception error, bool isSubscribe)
 	{
 		if (subscription == null)
 			throw new ArgumentNullException(nameof(subscription));

@@ -13,15 +13,20 @@ namespace StockSharp.Algo;
 public class ConnectorEventDispatcher : IConnectorEventDispatcher
 {
 	private readonly Connector _connector;
+	private readonly IConnectorSubscriptionManager _subscriptionManager;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="ConnectorEventDispatcher"/> class.
 	/// </summary>
 	/// <param name="connector">The owning connector fa&#231;ade whose events are fired by this dispatcher.</param>
-	/// <exception cref="ArgumentNullException"><paramref name="connector"/> is <see langword="null"/>.</exception>
-	public ConnectorEventDispatcher(Connector connector)
+	/// <param name="subscriptionManager">The subscription-manager seam used to resolve the subscriptions
+	/// an incoming message belongs to. Injected as a focused, interface-typed dependency so the facade
+	/// keeps it private rather than exposing it as an internal field. Cannot be <see langword="null"/>.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="connector"/> or <paramref name="subscriptionManager"/> is <see langword="null"/>.</exception>
+	public ConnectorEventDispatcher(Connector connector, IConnectorSubscriptionManager subscriptionManager)
 	{
 		_connector = connector ?? throw new ArgumentNullException(nameof(connector));
+		_subscriptionManager = subscriptionManager ?? throw new ArgumentNullException(nameof(subscriptionManager));
 	}
 
 	/// <inheritdoc />
@@ -381,7 +386,7 @@ public class ConnectorEventDispatcher : IConnectorEventDispatcher
 	/// <inheritdoc />
 	public bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
 	{
-		return RaiseReceived(entity, _connector._subscriptionManager.GetSubscriptions(message), evt, out anyCanOnline);
+		return RaiseReceived(entity, _subscriptionManager.GetSubscriptions(message), evt, out anyCanOnline);
 	}
 
 	/// <inheritdoc />

@@ -30,8 +30,8 @@ public interface IRiskManager : ILogSource, IPersistable, ICloneable<IRiskManage
 	/// </summary>
 	/// <remarks>
 	/// Resets the runtime state of every rule currently in <see cref="Rules"/> by delegating to each rule's own
-	/// <see cref="IRiskRule.Reset"/>. This clears accumulated, stateful tracking (such as rolling counters or
-	/// sliding time windows) while retaining the configured rules and their settings.
+	/// <see cref="IRiskRule.Reset"/>. This clears accumulated, stateful tracking (such as accumulated counter or
+	/// window state) while retaining the configured rules and their settings.
 	/// </remarks>
 	void Reset();
 

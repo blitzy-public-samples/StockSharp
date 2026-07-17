@@ -22,6 +22,12 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 	#region Helpers
 
 	/// <summary>
+	/// Fixed UTC timestamp used by the test helpers so message construction is fully deterministic and does
+	/// not depend on wall-clock time.
+	/// </summary>
+	private static readonly DateTime _fixedTime = new(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+	/// <summary>
 	/// Create a manager but expose it as the <see cref="IConnectorSubscriptionManager"/> abstraction so that
 	/// every subsequent call in a test goes through the interface, not the concrete type.
 	/// </summary>
@@ -77,7 +83,7 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 		var msg = new ExecutionMessage
 		{
 			DataTypeEx = DataType.Ticks,
-			ServerTime = DateTime.UtcNow,
+			ServerTime = _fixedTime,
 		};
 		msg.SetSubscriptionIds(subscriptionIds);
 		return msg;
@@ -329,12 +335,24 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 		var transId = subscription.TransactionId;
 
 		var carrier = CreateDataMessage(transId);
-		var item = new SecurityMessage { SecurityId = Helper.CreateSecurityId() };
+		var securityId = Helper.CreateSecurityId();
+		var item = new SecurityMessage { SecurityId = securityId };
 
 		var affected = manager.ProcessLookupResponse(carrier, item).ToArray();
 
 		affected.Any(s => s.TransactionId == transId)
 			.AssertTrue("Lookup subscription should receive the response item");
+
+		// Complete the lookup flow: finishing the subscription drains the buffered items, letting us assert
+		// the buffered payload's identity and content rather than merely that the subscription resolved.
+		var finished = manager.ProcessSubscriptionFinishedMessage(
+			new SubscriptionFinishedMessage { OriginalTransactionId = transId }, out var items);
+
+		finished.AssertSame(subscription);
+		items.AssertNotNull();
+		items.Length.AssertEqual(1, "Exactly the one buffered lookup item should be drained on finish");
+		items[0].AssertSame(item);
+		((SecurityMessage)items[0]).SecurityId.AssertEqual(securityId, "Drained item must carry the original security id");
 	}
 
 	[TestMethod]
@@ -355,16 +373,23 @@ public class SubscriptionManagerInterfaceTests : BaseTestClass
 		var subscription = CreateCandleSubscription();
 		var transId = SubscribeAndActivate(manager, subscription);
 
+		var openTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 		var candle = new TimeFrameCandleMessage
 		{
-			OpenTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+			OpenTime = openTime,
 		};
 		candle.SetSubscriptionIds([transId]);
 
 		var updated = manager.UpdateCandles(candle).ToArray();
 
-		updated.Any(t => t.subscription.TransactionId == transId)
-			.AssertTrue("Known candle subscription should be returned with its candle");
+		updated.Length.AssertEqual(1, "Exactly the one known candle subscription should be returned");
+
+		// Assert the returned payload, not just that the subscription resolved: the tuple must carry the
+		// matching subscription and the very candle instance we passed in, with its fields preserved.
+		var (returnedSubscription, returnedCandle) = updated[0];
+		returnedSubscription.TransactionId.AssertEqual(transId, "Returned tuple must carry the matching subscription");
+		returnedCandle.AssertSame(candle);
+		returnedCandle.OpenTime.AssertEqual(openTime, "Returned candle must preserve its OpenTime");
 	}
 
 	[TestMethod]

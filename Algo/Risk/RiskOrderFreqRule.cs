@@ -4,14 +4,16 @@ namespace StockSharp.Algo.Risk;
 /// Risk-rule, tracking orders placing frequency.
 /// </summary>
 /// <remarks>
-/// A frequency variant of the universal risk-rule pattern: it filters <see cref="MessageTypes.OrderRegister"/> and
-/// <see cref="MessageTypes.OrderReplace"/> messages and counts them within a sliding <see cref="Interval"/> window.
-/// The window is opened by the first order and anchored to that order's <see cref="Message.LocalTime"/>; the rule
-/// activates once the running count reaches the configured <see cref="Count"/> (default 10) within the window
-/// (<c>count &gt;= Count</c>), at which point the window is reset. An order that arrives after the window has
-/// elapsed starts a fresh window instead of triggering. On activation the configured <see cref="RiskRule.Action"/>
-/// is enforced. Unlike the value-threshold rules there is no sign-based comparison direction — the trigger is
-/// purely the count reaching the limit inside the time window.
+/// A frequency-based risk rule: it filters <see cref="MessageTypes.OrderRegister"/> and
+/// <see cref="MessageTypes.OrderReplace"/> messages and counts them within a first-event-anchored fixed
+/// <see cref="Interval"/> window. The window is opened by the first order and anchored to that order's
+/// <see cref="Message.LocalTime"/>; its end is fixed at <c>time + Interval</c> and does not slide forward as
+/// further orders arrive. The rule activates once the running count reaches the configured <see cref="Count"/>
+/// (default 10) while still inside the window (<c>count &gt;= Count</c>), at which point the window is reset. An
+/// order that arrives at or after the window end (<c>time &gt;= endTime</c>) starts a fresh window instead of
+/// triggering. On activation the configured <see cref="RiskRule.Action"/> is reported by the risk manager and
+/// enforced downstream. The trigger is purely the count reaching the limit inside the fixed window; there is no
+/// sign-based comparison direction.
 /// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),
@@ -69,7 +71,7 @@ public class RiskOrderFreqRule : RiskRule
 	/// Interval, during which orders quantity will be monitored.
 	/// </summary>
 	/// <remarks>
-	/// The length of the sliding time window over which orders are counted, measured from the
+	/// The length of the first-event-anchored fixed time window over which orders are counted, measured from the
 	/// <see cref="Message.LocalTime"/> of the order that opened the window. Must be non-negative
 	/// (the setter rejects values below <see cref="TimeSpan.Zero"/>).
 	/// </remarks>

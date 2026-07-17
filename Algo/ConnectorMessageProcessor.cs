@@ -9,15 +9,24 @@ namespace StockSharp.Algo;
 public class ConnectorMessageProcessor : IConnectorMessageProcessor
 {
 	private readonly Connector _connector;
+	private readonly EntityCache _entityCache;
+	private readonly IConnectorSubscriptionManager _subscriptionManager;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="ConnectorMessageProcessor"/> class.
 	/// </summary>
 	/// <param name="connector">The owning <see cref="Connector"/> facade whose state and event
 	/// forwarders the handlers operate against. Cannot be <see langword="null"/>.</param>
-	public ConnectorMessageProcessor(Connector connector)
+	/// <param name="entityCache">The entity-cache seam the handlers read from and update. Injected as
+	/// a focused dependency so the facade keeps it private rather than exposing it as an internal
+	/// field. Cannot be <see langword="null"/>.</param>
+	/// <param name="subscriptionManager">The subscription-manager seam the handlers query and drive.
+	/// Injected as a focused, interface-typed dependency. Cannot be <see langword="null"/>.</param>
+	public ConnectorMessageProcessor(Connector connector, EntityCache entityCache, IConnectorSubscriptionManager subscriptionManager)
 	{
 		_connector = connector ?? throw new ArgumentNullException(nameof(connector));
+		_entityCache = entityCache ?? throw new ArgumentNullException(nameof(entityCache));
+		_subscriptionManager = subscriptionManager ?? throw new ArgumentNullException(nameof(subscriptionManager));
 	}
 
 	/// <inheritdoc />
@@ -30,7 +39,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 		{
 			if (adapter == _connector.Adapter)
 			{
-				await _connector.ApplySubscriptionManagerActionsAsync(_connector._subscriptionManager.HandleConnected(subscription => _connector.Adapter.IsMessageSupported(subscription.SubscriptionMessage.Type)), cancellationToken);
+				await _connector.ApplySubscriptionManagerActionsAsync(_subscriptionManager.HandleConnected(subscription => _connector.Adapter.IsMessageSupported(subscription.SubscriptionMessage.Type)), cancellationToken);
 
 				// raise event after re subscriptions cause handler on Connected event can send some subscriptions
 				_connector.RaiseConnected();
@@ -90,7 +99,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 		if (message.IsFiltered || message.State != null)
 			return;
 
-		_connector._entityCache.UpdateOrderBookSnapshot(message);
+		_entityCache.UpdateOrderBookSnapshot(message);
 
 		var bestBid = message.GetBestBid();
 		var bestAsk = message.GetBestAsk();
@@ -103,7 +112,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 		{
 			security ??= await _connector.EnsureGetSecurityAsync(message, cancellationToken);
 
-			var info = _connector._entityCache.GetSecurityValues(security, time);
+			var info = _entityCache.GetSecurityValues(security, time);
 
 			info.ClearBestQuotes(time);
 
@@ -233,7 +242,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 			return b.ApplyChanges(message);
 		});
 
-		var subscriptions = _connector._subscriptionManager.ProcessLookupResponse(message, board);
+		var subscriptions = _subscriptionManager.ProcessLookupResponse(message, board);
 		_connector.RaiseReceived(board, subscriptions, _connector.BoardReceivedEvent);
 	}
 
@@ -262,7 +271,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 			return true;
 		}, cancellationToken);
 
-		var subscriptions = _connector._subscriptionManager.ProcessLookupResponse(message, security);
+		var subscriptions = _subscriptionManager.ProcessLookupResponse(message, security);
 		_connector.RaiseReceived(security, subscriptions, _connector.SecurityReceivedEvent);
 	}
 
@@ -271,7 +280,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	{
 		var dt = message.FileDataType ?? throw new InvalidOperationException(LocalizedStrings.NoDataTypeSelected);
 
-		_connector._subscriptionManager.ProcessLookupResponse(message, dt);
+		_subscriptionManager.ProcessLookupResponse(message, dt);
 		_connector.RaiseReceived(dt, message, _connector.DataTypeReceivedEvent);
 	}
 
@@ -287,7 +296,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 
 			security = await _connector.EnsureGetSecurityAsync(message, cancellationToken);
 
-			if (_connector._entityCache.HasLevel1Info(security))
+			if (_entityCache.HasLevel1Info(security))
 				return;
 		}
 
@@ -305,7 +314,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 			security ??= await _connector.EnsureGetSecurityAsync(message, cancellationToken);
 
 			var time = message.ServerTime;
-			var info = _connector._entityCache.GetSecurityValues(security, time);
+			var info = _entityCache.GetSecurityValues(security, time);
 
 			var changes = message.Changes;
 			var cloned = false;
@@ -353,7 +362,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	{
 		var security = message.SecurityId == null ? null : await _connector.GetSecurityAsync(message.SecurityId.Value, cancellationToken);
 
-		var news = _connector._entityCache.ProcessNewsMessage(security, message);
+		var news = _entityCache.ProcessNewsMessage(security, message);
 
 		if (_connector.RaiseReceived(news.news, message, _connector.NewsReceivedEvent) == false)
 			return;
@@ -385,7 +394,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 		//	return;
 
 		if (isNew)
-			_connector._subscriptionManager.ProcessLookupResponse(message, portfolio);
+			_subscriptionManager.ProcessLookupResponse(message, portfolio);
 
 		_connector.RaiseReceived(portfolio, message, _connector.PortfolioReceivedEvent);
 	}
@@ -439,12 +448,12 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	{
 		var error = replyMsg.Error;
 
-		var subscription = _connector._subscriptionManager.ProcessResponse(replyMsg, out var originalMsg, out var unexpectedCancelled, out var items);
+		var subscription = _subscriptionManager.ProcessResponse(replyMsg, out var originalMsg, out var unexpectedCancelled, out var items);
 
 		if (originalMsg == null)
 		{
 			if (error != null)
-				_connector.RaiseError(error);
+				_connector.RaiseErrorCore(error);
 
 			return;
 		}
@@ -477,7 +486,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 				_connector.RaiseSubscriptionStarted(subscription);
 			else
 			{
-				_connector.RaiseSubscriptionFailed(subscription, error, originalMsg.IsSubscribe);
+				_connector.RaiseSubscriptionFailedCore(subscription, error, originalMsg.IsSubscribe);
 
 				T[] typed<T>() => items.Cast<T>().ToArray();
 
@@ -492,7 +501,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	/// <inheritdoc />
 	public async ValueTask ProcessSubscriptionFinishedMessage(SubscriptionFinishedMessage message, CancellationToken cancellationToken)
 	{
-		var subscription = _connector._subscriptionManager.ProcessSubscriptionFinishedMessage(message, out var items);
+		var subscription = _subscriptionManager.ProcessSubscriptionFinishedMessage(message, out var items);
 
 		if (subscription == null)
 			return;
@@ -533,7 +542,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	/// <inheritdoc />
 	public void ProcessSubscriptionOnlineMessage(SubscriptionOnlineMessage message)
 	{
-		var subscription = _connector._subscriptionManager.ProcessSubscriptionOnlineMessage(message, out var items);
+		var subscription = _subscriptionManager.ProcessSubscriptionOnlineMessage(message, out var items);
 
 		if (subscription == null)
 			return;
@@ -546,7 +555,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	/// <inheritdoc />
 	public void ProcessErrorMessage(ErrorMessage message)
 	{
-		_connector.RaiseError(message.Error);
+		_connector.RaiseErrorCore(message.Error);
 	}
 
 	/// <inheritdoc />
@@ -562,7 +571,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 		if (security != null)
 		{
 			await _connector.SecurityStorage.DeleteAsync(security, cancellationToken);
-			_connector._removed?.Invoke([security]);
+			_connector.FireSecuritiesRemoved([security]);
 		}
 	}
 
@@ -575,7 +584,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	/// <inheritdoc />
 	public void ProcessCandleMessage(CandleMessage message)
 	{
-		foreach (var (subscription, candle) in _connector._subscriptionManager.UpdateCandles(message))
+		foreach (var (subscription, candle) in _subscriptionManager.UpdateCandles(message))
 		{
 			_connector.CandleReceivedEvent?.Invoke(subscription, candle);
 			_connector.RaiseSubscriptionReceived(subscription, message);
@@ -606,7 +615,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 			security ??= await _connector.EnsureGetSecurityAsync(message, cancellationToken);
 
 			var time = message.ServerTime;
-			var info = _connector._entityCache.GetSecurityValues(security, time);
+			var info = _entityCache.GetSecurityValues(security, time);
 
 			info.ClearLastTrade(time);
 
@@ -674,7 +683,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	{
 		if (message.OrderState != OrderStates.Failed && message.Error == null)
 		{
-			foreach (var change in _connector._entityCache.ProcessOrderMessage(o, security, message, transactionId, _connector.LookupByPortfolioName))
+			foreach (var change in _entityCache.ProcessOrderMessage(o, security, message, transactionId, _connector.LookupByPortfolioName))
 			{
 				if (change == EntityCache.OrderChangeInfo.NotExist)
 				{
@@ -684,7 +693,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 
 				var order = change.Order;
 
-				_connector._entityCache.TrySetAdapter(order, message.Adapter);
+				_entityCache.TrySetAdapter(order, message.Adapter);
 
 				if (change.IsNew)
 				{
@@ -713,17 +722,17 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 				return;
 			}
 
-			foreach (var (fail, operation) in _connector._entityCache.ProcessOrderFailMessage(o, security, message))
+			foreach (var (fail, operation) in _entityCache.ProcessOrderFailMessage(o, security, message))
 			{
 				var order = fail.Order;
 
-				_connector._entityCache.TrySetAdapter(order, message.Adapter);
+				_entityCache.TrySetAdapter(order, message.Adapter);
 
 				//TryProcessFilteredMarketDepth(fail.Order.Security, message);
 
 				//var isRegisterFail = (fail.Order.Id == null && fail.Order.StringId.IsEmpty()) || fail.Order.Status == OrderStatus.RejectedBySystem;
 
-				_connector._entityCache.AddFail(operation, fail);
+				_entityCache.AddFail(operation, fail);
 
 				switch (operation)
 				{
@@ -754,7 +763,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 
 	private void ProcessOwnTradeMessage(Order order, Security security, ExecutionMessage message, long transactionId)
 	{
-		var (trade, isNew) = _connector._entityCache.ProcessOwnTradeMessage(order, security, message, transactionId);
+		var (trade, isNew) = _entityCache.ProcessOwnTradeMessage(order, security, message, transactionId);
 
 		if (trade == null)
 			return;
@@ -770,7 +779,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 	{
 		var originId = message.OriginalTransactionId;
 
-		if (_connector._entityCache.IsMassCancelation(originId))
+		if (_entityCache.IsMassCancelation(originId))
 		{
 			if (message.IsOk())
 				_connector.RaiseMassOrderCanceled(originId, message.ServerTime);
@@ -780,7 +789,7 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 			return;
 		}
 
-		var isStatusRequest = _connector._entityCache.IsOrderStatusRequest(originId);
+		var isStatusRequest = _entityCache.IsOrderStatusRequest(originId);
 
 		if (!message.IsOk() && isStatusRequest)
 		{
@@ -795,18 +804,18 @@ public class ConnectorMessageProcessor : IConnectorMessageProcessor
 
 		if (transactionId == 0)
 		{
-			transactionId = isStatusRequest || _connector._entityCache.IsMassCancelation(originId) ? 0 : originId;
+			transactionId = isStatusRequest || _entityCache.IsMassCancelation(originId) ? 0 : originId;
 
 			if (transactionId == 0)
-				order = _connector._entityCache.TryGetOrder(message.OrderId, message.OrderStringId);
+				order = _entityCache.TryGetOrder(message.OrderId, message.OrderStringId);
 		}
 
 		if (transactionId != 0)
 		{
 			if (message.HasTradeInfo())
-				order = _connector._entityCache.TryGetOrder(transactionId, OrderOperations.Register);
+				order = _entityCache.TryGetOrder(transactionId, OrderOperations.Register);
 			else
-				order = _connector._entityCache.TryGetOrder(transactionId, OrderOperations.Edit) ?? _connector._entityCache.TryGetOrder(transactionId, OrderOperations.Cancel) ?? _connector._entityCache.TryGetOrder(transactionId, OrderOperations.Register);
+				order = _entityCache.TryGetOrder(transactionId, OrderOperations.Edit) ?? _entityCache.TryGetOrder(transactionId, OrderOperations.Cancel) ?? _entityCache.TryGetOrder(transactionId, OrderOperations.Register);
 		}
 
 		Security security;

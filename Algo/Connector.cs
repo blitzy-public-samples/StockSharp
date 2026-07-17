@@ -14,15 +14,16 @@ using StockSharp.Algo.Slippage;
 /// </summary>
 public partial class Connector : BaseLogReceiver, IConnector
 {
-	// Widened from private to internal so the extracted message-processing component
-	// (ConnectorMessageProcessor) can read them through its back-reference to this facade.
-	// Access widening is behavior-neutral within the same assembly.
-	internal readonly EntityCache _entityCache;
+	// Core entity cache. Held privately by the facade and injected into the extracted
+	// components (e.g. ConnectorMessageProcessor) as a focused constructor dependency, so the
+	// composed components never reach back into the facade's internals and no assembly-wide
+	// access widening is required.
+	private readonly EntityCache _entityCache;
 	// Field typed as the segregated abstraction (IConnectorSubscriptionManager) per the facade
-	// interface-segregation goal; the concrete ConnectorSubscriptionManager still backs it. Kept
-	// internal (not private) so the extracted components can reach the subscription seam through
-	// their back-reference to this facade. Retype is behavior-neutral (same instance, virtual dispatch).
-	internal readonly IConnectorSubscriptionManager _subscriptionManager;
+	// interface-segregation goal; the concrete ConnectorSubscriptionManager still backs it. Held
+	// privately by the facade and injected (interface-typed) into the extracted components as a
+	// focused constructor dependency. Retype is behavior-neutral (same instance, virtual dispatch).
+	private readonly IConnectorSubscriptionManager _subscriptionManager;
 
 	// Extracted inbound-message handler component. The facade retains the OnProcessMessage
 	// dispatch switch and delegates each handler body to this component (composition/delegation),
@@ -76,9 +77,12 @@ public partial class Connector : BaseLogReceiver, IConnector
 		// Explicit concrete type on the RHS: the field is now the interface, so target-typed new() cannot infer it.
 		_subscriptionManager = new ConnectorSubscriptionManager(this, transactionIdGenerator, UnsubscribeOnDisconnect);
 
-		_messageProcessor = new ConnectorMessageProcessor(this);
+		// Inject the entity cache and subscription-manager seams as focused constructor
+		// dependencies rather than exposing them as facade internals. Both are already
+		// constructed above, so the injection order is satisfied.
+		_messageProcessor = new ConnectorMessageProcessor(this, _entityCache, _subscriptionManager);
 
-		_eventDispatcher = new ConnectorEventDispatcher(this);
+		_eventDispatcher = new ConnectorEventDispatcher(this, _subscriptionManager);
 
 		//SupportLevel1DepthBuilder = true;
 		SupportFilteredMarketDepth = true;
@@ -231,14 +235,19 @@ public partial class Connector : BaseLogReceiver, IConnector
 		remove => _added -= value;
 	}
 
-	// Widened to internal for the extracted ConnectorMessageProcessor (ProcessSecurityRemoveMessage).
-	internal Action<IEnumerable<Security>> _removed;
+	private Action<IEnumerable<Security>> _removed;
 
 	event Action<IEnumerable<Security>> ISecurityProvider.Removed
 	{
 		add => _removed += value;
 		remove => _removed -= value;
 	}
+
+	// Narrow fire-only bridge for the extracted ConnectorMessageProcessor
+	// (ProcessSecurityRemoveMessage). Keeps the _removed delegate field private on the facade
+	// while letting the component raise the ISecurityProvider.Removed event through a focused,
+	// invoke-only hook rather than reaching into the field directly.
+	internal void FireSecuritiesRemoved(IEnumerable<Security> securities) => _removed?.Invoke(securities);
 
 	private Action _cleared;
 

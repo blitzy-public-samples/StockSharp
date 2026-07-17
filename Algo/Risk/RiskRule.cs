@@ -5,13 +5,14 @@ namespace StockSharp.Algo.Risk;
 /// </summary>
 /// <remarks>
 /// Serves as the common base type for all concrete risk rules and implements <see cref="IRiskRule"/>.
-/// Concrete rules follow a universal pattern: they filter on a specific message type, extract a single
-/// monitored value, treat a zero threshold as disabled, use the sign of the threshold to select the
-/// comparison direction, and return a boolean trigger that drives the configured <see cref="Action"/>.
-/// Each concrete rule adds its own <c>[Display]</c>-attributed configuration properties (thresholds,
-/// windows, and so on). This base owns the mutable <see cref="Action"/> and the display <see cref="Title"/>,
-/// persists <see cref="Action"/> through <see cref="Load"/> and <see cref="Save"/>, and raises change
-/// notifications through <see cref="INotifyPropertyChanged"/> for user-interface binding.
+/// This base owns the mutable <see cref="Action"/> and the display <see cref="Title"/>, persists
+/// <see cref="Action"/> through <see cref="Load"/> and <see cref="Save"/>, and raises change
+/// notifications through <see cref="INotifyPropertyChanged"/> for user-interface binding. What a rule
+/// monitors is rule-specific rather than following a single universal pattern: each concrete rule
+/// chooses the message type it inspects and the value it extracts, adds its own <c>[Display]</c>-attributed
+/// configuration properties (thresholds, windows, and so on), decides how a zero threshold or a threshold
+/// sign is interpreted, and returns a boolean trigger from <see cref="ProcessMessage"/> indicating
+/// activation - all documented on that concrete rule.
 /// </remarks>
 public abstract class RiskRule : IRiskRule, INotifyPropertyChanged
 {
@@ -94,7 +95,7 @@ public abstract class RiskRule : IRiskRule, INotifyPropertyChanged
 	/// <inheritdoc />
 	/// <remarks>
 	/// Virtual extension point: the base implementation is a deliberate no-op. Stateful rules override it to
-	/// clear counters, sliding windows, or seeded baselines while leaving their configuration intact.
+	/// clear counters, window/counter state, or seeded baselines while leaving their configuration intact.
 	/// </remarks>
 	public virtual void Reset()
 	{

@@ -6,7 +6,7 @@ namespace StockSharp.Algo.Risk;
 /// <remarks>
 /// Limits the frequency of own trades (executions). It counts <see cref="ExecutionMessage"/> messages that
 /// carry trade information (<c>HasTradeInfo()</c>) and activates when that running count reaches
-/// <see cref="Count"/> within a sliding <see cref="Interval"/> time window. Only
+/// <see cref="Count"/> within a first-event-anchored fixed <see cref="Interval"/> time window. Only
 /// <see cref="MessageTypes.Execution"/> messages representing own-trade fills are considered; all other
 /// message types are ignored. The first counted trade opens a window ending at <c>LocalTime + Interval</c>;
 /// each further trade arriving before the window closes increments the running count, and once
@@ -68,8 +68,8 @@ public class RiskTradeFreqRule : RiskRule
 	/// Interval, during which trades quantity will be monitored.
 	/// </summary>
 	/// <remarks>
-	/// Length of the sliding time window over which trades are counted. Must be non-negative (the setter
-	/// rejects values below <c>TimeSpan.Zero</c>).
+	/// Length of the first-event-anchored fixed time window over which trades are counted. Must be non-negative
+	/// (the setter rejects values below <c>TimeSpan.Zero</c>).
 	/// </remarks>
 	[Display(
 		ResourceType = typeof(LocalizedStrings),
@@ -95,7 +95,7 @@ public class RiskTradeFreqRule : RiskRule
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// Clears the sliding-window state after invoking the base reset: the running trade count is set back to
+	/// Clears the fixed-window state after invoking the base reset: the running trade count is set back to
 	/// zero and the open window is discarded, so counting restarts on the next qualifying trade.
 	/// </remarks>
 	public override void Reset()

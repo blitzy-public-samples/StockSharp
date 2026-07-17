@@ -4,28 +4,47 @@ namespace StockSharp.Algo.Risk;
 /// The message adapter, automatically controlling risk rules.
 /// </summary>
 /// <remarks>
-/// This wrapper consults the composed <see cref="IRiskManager"/> on both message directions:
-/// outbound messages travelling to the inner adapter through <see cref="OnSendInMessageAsync"/>,
-/// and inbound messages surfaced through <see cref="OnInnerAdapterNewOutMessageAsync"/>. Each
-/// message is offered to the manager's rules, and for every rule reported as triggered the rule's
-/// configured <see cref="RiskActions"/> value is enforced as a concrete effect on the message flow:
+/// This wrapper consults the composed <see cref="IRiskManager"/> on both message directions, but the
+/// evaluation is path-specific rather than applied uniformly to every message:
 /// <list type="bullet">
 /// <item><description>
-/// <see cref="RiskActions.ClosePositions"/> emits an <see cref="OrderGroupCancelMessage"/> in
+/// Outbound (send-in) via <see cref="OnSendInMessageAsync"/>: while trading is blocked by a prior
+/// <see cref="RiskActions.StopTrading"/> activation, <see cref="MessageTypes.OrderRegister"/> and
+/// <see cref="MessageTypes.OrderReplace"/> messages are rejected with a failed
+/// <see cref="ExecutionMessage"/> and returned before any rule evaluation (early return); all other
+/// outbound messages are offered to the manager's rules.
+/// </description></item>
+/// <item><description>
+/// Inbound (new-out) via <see cref="OnInnerAdapterNewOutMessageAsync"/>: every message except
+/// <see cref="MessageTypes.Reset"/> is offered to the manager's rules; a <see cref="MessageTypes.Reset"/>
+/// message is passed straight through without risk evaluation.
+/// </description></item>
+/// </list>
+/// For every rule the manager reports as triggered, a warning is logged (the
+/// <see cref="LocalizedStrings.ActivatingRiskRule"/> message) and the rule's configured
+/// <see cref="RiskActions"/> value is applied as a concrete effect on the message flow:
+/// <list type="bullet">
+/// <item><description>
+/// <see cref="RiskActions.ClosePositions"/> produces an <see cref="OrderGroupCancelMessage"/> in
 /// <see cref="OrderGroupCancelModes.ClosePositions"/> mode, delegating to the inner adapter to
 /// flatten open positions.
 /// </description></item>
 /// <item><description>
-/// <see cref="RiskActions.StopTrading"/> blocks trading: subsequent
+/// <see cref="RiskActions.StopTrading"/> blocks trading and logs the transition: subsequent
 /// <see cref="MessageTypes.OrderRegister"/> and <see cref="MessageTypes.OrderReplace"/> messages
-/// are rejected with a failed execution (reason "trading disabled") instead of being forwarded,
-/// until a later message triggers no rules, at which point trading is automatically unblocked.
+/// are rejected with a failed execution (reason "trading disabled") instead of being forwarded.
+/// Trading is automatically unblocked (and the transition logged) as soon as a later processed
+/// message triggers no rules.
 /// </description></item>
 /// <item><description>
-/// <see cref="RiskActions.CancelOrders"/> emits a looped-back <see cref="OrderGroupCancelMessage"/>
-/// to cancel the active orders.
+/// <see cref="RiskActions.CancelOrders"/> raises a looped-back <see cref="OrderGroupCancelMessage"/>
+/// (through <c>LoopBack</c>) to cancel the active orders.
 /// </description></item>
 /// </list>
+/// Any other (unrecognised) <see cref="RiskActions"/> value causes an
+/// <see cref="InvalidOperationException"/> to be thrown. On the inbound path, a message produced by an
+/// activated rule is looped back into this adapter and raised as a new outgoing message before the
+/// original message is forwarded to the base implementation.
 /// </remarks>
 public class RiskMessageAdapter : MessageAdapterWrapper
 {
@@ -128,6 +147,24 @@ public class RiskMessageAdapter : MessageAdapterWrapper
 		await base.OnInnerAdapterNewOutMessageAsync(message, cancellationToken);
 	}
 
+	/// <summary>
+	/// Runs a single message through the risk manager and applies the effect of every activated rule.
+	/// </summary>
+	/// <remarks>
+	/// Offers <paramref name="message"/> to <see cref="IRiskManager.ProcessRules"/> and iterates the rules it
+	/// reports as triggered. For each triggered rule a warning is logged (the
+	/// <see cref="LocalizedStrings.ActivatingRiskRule"/> message) and its <see cref="RiskActions"/> value is
+	/// acted on: <see cref="RiskActions.ClosePositions"/> yields an <see cref="OrderGroupCancelMessage"/> in
+	/// <see cref="OrderGroupCancelModes.ClosePositions"/> mode as the returned replacement;
+	/// <see cref="RiskActions.StopTrading"/> sets the trading-blocked flag and logs the transition;
+	/// <see cref="RiskActions.CancelOrders"/> raises a looped-back <see cref="OrderGroupCancelMessage"/>
+	/// immediately; and any other value throws an <see cref="InvalidOperationException"/>. After processing, if
+	/// trading was blocked and no rule triggered on this message, the block is cleared and the unblock is logged.
+	/// </remarks>
+	/// <param name="message">The message to evaluate against the configured rules.</param>
+	/// <param name="cancellationToken">The token used to cancel the operation.</param>
+	/// <returns>A replacement message to forward in place of the original (currently only for
+	/// <see cref="RiskActions.ClosePositions"/>), or <see langword="null"/> when nothing needs to be substituted.</returns>
 	private async ValueTask<Message> ProcessRiskAsync(Message message, CancellationToken cancellationToken)
 	{
 		Message retVal = null;

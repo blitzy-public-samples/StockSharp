@@ -4,10 +4,12 @@ namespace StockSharp.Algo.Risk;
 /// Risk-rule, tracking trade price.
 /// </summary>
 /// <remarks>
-/// Follows the universal risk-rule pattern: it inspects incoming <see cref="MessageTypes.Execution"/> messages,
-/// ignores those that do not carry own-trade information, extracts the executed <see cref="ExecutionMessage.TradePrice"/>,
-/// and activates when that price is greater than or equal to (&gt;=) the configured <see cref="Price"/> threshold.
-/// When the rule activates, the configured <see cref="RiskRule.Action"/> is applied by the risk manager.
+/// A value-threshold risk rule (see <see cref="RiskRule"/> for the shared contract): it inspects incoming
+/// <see cref="MessageTypes.Execution"/> messages, ignores those that do not carry own-trade information,
+/// extracts the executed <see cref="ExecutionMessage.TradePrice"/>, and activates when that price is greater
+/// than or equal to (&gt;=) the configured <see cref="Price"/> threshold. When the rule activates,
+/// <see cref="IRiskManager"/> reports it as triggered and its configured <see cref="RiskRule.Action"/> is
+/// enforced downstream by <see cref="RiskMessageAdapter"/> (or the calling code), not by the manager itself.
 /// </remarks>
 [Display(
 	ResourceType = typeof(LocalizedStrings),
