@@ -150,8 +150,12 @@ message can activate several rules at once, and each of their actions is applied
 
 ## 3. The 16 risk rules
 
-There are **16** concrete rules. The table below summarizes all of them at a glance; the sentences
-in [§3.2](#32-one-sentence-per-rule) restate each rule in plain language, and the four marked
+There are **16 rule types — 15 concrete rules plus one abstract shared base**
+(`RiskTransactionCommissionRule`, the common parent of `RiskOrderCommissionRule` and
+`RiskTradeCommissionRule`; it is never used on its own, only through those two concrete subclasses).
+The table below summarizes all of them at a glance — the abstract base is listed for completeness
+and is labelled **abstract base** in its row — while the sentences in
+[§3.2](#32-one-sentence-per-rule) restate each rule in plain language, and the four marked
 **(worked example)** are written out in full in [§4](#4-worked-examples).
 
 Throughout, *"triggers when"* describes the exact condition under which the rule returns `true` and
