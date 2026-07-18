@@ -6,6 +6,12 @@ using StockSharp.Algo.Derivatives;
 
 partial class StrategyOld
 {
+	// Order-creation and convenience helper methods (e.g. CreateOrder, option-desk / chart /
+	// alert-service accessors, and formed/online trading-mode checks) for the legacy engine.
+	//
+	// Part of the legacy StrategyOld monolith, kept only for reference and equivalence testing;
+	// superseded by the modern Strategy engine.
+
 	/// <summary>
 	/// To create the initialized order object.
 	/// </summary>

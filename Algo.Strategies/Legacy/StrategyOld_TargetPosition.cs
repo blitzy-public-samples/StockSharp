@@ -2,6 +2,10 @@ namespace StockSharp.Algo.Strategies;
 
 using StockSharp.Algo.PositionManagement;
 
+// Target-position management fragment of the legacy StrategyOld monolith: drives orders toward a
+// requested target position through a PositionTargetManager and a pluggable IPositionModifyAlgo
+// factory (default MarketOrderAlgo). Part of the legacy StrategyOld engine, retained for reference
+// and equivalence testing only; superseded by the modern Strategy engine.
 partial class StrategyOld
 {
 	private PositionTargetManager _targetManager;

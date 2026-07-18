@@ -601,94 +601,94 @@ partial class Connector
 			switch (message.Type)
 			{
 				case MessageTypes.Connect:
-					await ProcessConnectMessage((ConnectMessage)message, cancellationToken);
+					await _messageProcessor.ProcessConnectMessage((ConnectMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.Disconnect:
-					ProcessDisconnectMessage((DisconnectMessage)message);
+					_messageProcessor.ProcessDisconnectMessage((DisconnectMessage)message);
 					break;
 
 				case MessageTypes.ConnectionLost:
-					ProcessConnectionLostMessage(message);
+					_messageProcessor.ProcessConnectionLostMessage(message);
 					break;
 
 				case MessageTypes.ConnectionRestored:
-					ProcessConnectionRestoredMessage(message);
+					_messageProcessor.ProcessConnectionRestoredMessage(message);
 					break;
 
 				case MessageTypes.QuoteChange:
-					await ProcessQuotesMessage((QuoteChangeMessage)message, cancellationToken);
+					await _messageProcessor.ProcessQuotesMessage((QuoteChangeMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.Board:
-					ProcessBoardMessage((BoardMessage)message);
+					_messageProcessor.ProcessBoardMessage((BoardMessage)message);
 					break;
 
 				case MessageTypes.BoardState:
-					ProcessBoardStateMessage((BoardStateMessage)message);
+					_messageProcessor.ProcessBoardStateMessage((BoardStateMessage)message);
 					break;
 
 				case MessageTypes.Security:
-					await ProcessSecurityMessage((SecurityMessage)message, cancellationToken);
+					await _messageProcessor.ProcessSecurityMessage((SecurityMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.DataTypeInfo:
-					ProcessDataTypeInfoMessage((DataTypeInfoMessage)message);
+					_messageProcessor.ProcessDataTypeInfoMessage((DataTypeInfoMessage)message);
 					break;
 
 				case MessageTypes.Level1Change:
-					await ProcessLevel1ChangeMessage((Level1ChangeMessage)message, cancellationToken);
+					await _messageProcessor.ProcessLevel1ChangeMessage((Level1ChangeMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.News:
-					await ProcessNewsMessage((NewsMessage)message, cancellationToken);
+					await _messageProcessor.ProcessNewsMessage((NewsMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.Execution:
-					await ProcessExecutionMessage((ExecutionMessage)message, cancellationToken);
+					await _messageProcessor.ProcessExecutionMessage((ExecutionMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.Portfolio:
-					ProcessPortfolioMessage((PortfolioMessage)message);
+					_messageProcessor.ProcessPortfolioMessage((PortfolioMessage)message);
 					break;
 
 				case MessageTypes.PositionChange:
-					await ProcessPositionChangeMessage((PositionChangeMessage)message, cancellationToken);
+					await _messageProcessor.ProcessPositionChangeMessage((PositionChangeMessage)message, cancellationToken);
 					break;
 
 				//case MessageTypes.Time:
 				//	break;
 
 				case MessageTypes.SubscriptionResponse:
-					ProcessSubscriptionResponseMessage((SubscriptionResponseMessage)message);
+					_messageProcessor.ProcessSubscriptionResponseMessage((SubscriptionResponseMessage)message);
 					break;
 
 				case MessageTypes.SubscriptionFinished:
-					await ProcessSubscriptionFinishedMessage((SubscriptionFinishedMessage)message, cancellationToken);
+					await _messageProcessor.ProcessSubscriptionFinishedMessage((SubscriptionFinishedMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.SubscriptionOnline:
-					ProcessSubscriptionOnlineMessage((SubscriptionOnlineMessage)message);
+					_messageProcessor.ProcessSubscriptionOnlineMessage((SubscriptionOnlineMessage)message);
 					break;
 
 				case MessageTypes.Error:
-					ProcessErrorMessage((ErrorMessage)message);
+					_messageProcessor.ProcessErrorMessage((ErrorMessage)message);
 					break;
 
 				case ExtendedMessageTypes.RemoveSecurity:
-					await ProcessSecurityRemoveMessage((SecurityRemoveMessage)message, cancellationToken);
+					await _messageProcessor.ProcessSecurityRemoveMessage((SecurityRemoveMessage)message, cancellationToken);
 					break;
 
 				case MessageTypes.ChangePassword:
-					ProcessChangePasswordMessage((ChangePasswordMessage)message);
+					_messageProcessor.ProcessChangePasswordMessage((ChangePasswordMessage)message);
 					break;
 
 				default:
 				{
 					if (message is CandleMessage candleMsg)
-						ProcessCandleMessage(candleMsg);
+						_messageProcessor.ProcessCandleMessage(candleMsg);
 					else if (message is ISubscriptionIdMessage subscrMsg)
-						ProcessSubscriptionMessage(subscrMsg);
+						_messageProcessor.ProcessSubscriptionMessage(subscrMsg);
 
 					// если адаптеры передают специфичные сообщения
 					// throw new ArgumentOutOfRangeException(LocalizedStrings.UnknownType.Put(message.Type));
@@ -702,113 +702,8 @@ partial class Connector
 		}
 	}
 
-	private void ProcessSubscriptionResponseMessage(SubscriptionResponseMessage replyMsg)
-	{
-		var error = replyMsg.Error;
 
-		var subscription = _subscriptionManager.ProcessResponse(replyMsg, out var originalMsg, out var unexpectedCancelled, out var items);
-
-		if (originalMsg == null)
-		{
-			if (error != null)
-				RaiseError(error);
-
-			return;
-		}
-
-		if (originalMsg is MarketDataMessage mdMdg)
-		{
-			if (originalMsg.IsSubscribe)
-			{
-				if (replyMsg.IsOk())
-					RaiseMarketDataSubscriptionSucceeded(mdMdg, subscription);
-				else
-				{
-					if (unexpectedCancelled)
-						RaiseMarketDataUnexpectedCancelled(mdMdg, error ?? new NotSupportedException(LocalizedStrings.SubscriptionNotSupported.Put(originalMsg)), subscription);
-					else
-						RaiseMarketDataSubscriptionFailed(mdMdg, replyMsg, subscription);
-				}
-			}
-			else
-			{
-				if (replyMsg.IsOk())
-					RaiseMarketDataUnSubscriptionSucceeded(mdMdg, subscription);
-				else
-					RaiseMarketDataUnSubscriptionFailed(mdMdg, replyMsg, subscription);
-			}
-		}
-		else
-		{
-			if (error == null)
-				RaiseSubscriptionStarted(subscription);
-			else
-			{
-				RaiseSubscriptionFailed(subscription, error, originalMsg.IsSubscribe);
-
-				T[] typed<T>() => items.Cast<T>().ToArray();
-
-				if (originalMsg is SecurityLookupMessage secLookup)
-					RaiseLookupSecuritiesResult(secLookup, error, typed<Security>());
-				else if (originalMsg is PortfolioLookupMessage pfLookup)
-					RaiseLookupPortfoliosResult(pfLookup, error, typed<Portfolio>());
-			}
-		}
-	}
-
-	private async ValueTask ProcessSubscriptionFinishedMessage(SubscriptionFinishedMessage message, CancellationToken cancellationToken)
-	{
-		var subscription = _subscriptionManager.ProcessSubscriptionFinishedMessage(message, out var items);
-
-		if (subscription == null)
-			return;
-
-		if (message.Body?.Length > 0)
-		{
-			if (subscription.DataType == DataType.Securities)
-			{
-				var secMsgs = new List<SecurityMessage>();
-
-				await foreach (var secMsg in message.Body.ExtractSecuritiesAsync().WithCancellation(cancellationToken))
-				{
-					await ProcessSecurityMessage(secMsg, cancellationToken);
-					secMsgs.Add(secMsg);
-				}
-
-				items = [.. items, .. secMsgs];
-			}
-			else if (subscription.DataType == DataType.Board)
-			{
-				var boardMsgs = new List<BoardMessage>();
-
-				await foreach (var boardMsg in message.Body.ExtractBoardsAsync().WithCancellation(cancellationToken))
-				{
-					ProcessBoardMessage(boardMsg);
-					boardMsgs.Add(boardMsg);
-				}
-
-				items = [.. items, .. boardMsgs];
-			}
-		}
-
-		RaiseMarketDataSubscriptionFinished(message, subscription);
-
-		ProcessSubscriptionResult(subscription, items);
-	}
-
-	private void ProcessSubscriptionOnlineMessage(SubscriptionOnlineMessage message)
-	{
-		var subscription = _subscriptionManager.ProcessSubscriptionOnlineMessage(message, out var items);
-
-		if (subscription == null)
-			return;
-
-		RaiseMarketDataSubscriptionOnline(subscription);
-
-		ProcessSubscriptionResult(subscription, items);
-	}
-
-	private void ProcessSubscriptionResult(Subscription subscription, object[] items)
+	internal void ProcessSubscriptionResult(Subscription subscription, object[] items)
 	{
 		T[] typed<T>() => items.Cast<T>().ToArray();
 
@@ -822,202 +717,6 @@ partial class Connector
 		}
 	}
 
-	private async ValueTask ProcessSecurityRemoveMessage(SecurityRemoveMessage message, CancellationToken cancellationToken)
-	{
-		if (message == null)
-			throw new ArgumentNullException(nameof(message));
-
-		var securityId = message.SecurityId;
-
-		var security = SecurityStorage.LookupById(securityId);
-
-		if (security != null)
-		{
-			await SecurityStorage.DeleteAsync(security, cancellationToken);
-			_removed?.Invoke([security]);
-		}
-	}
-
-	private async ValueTask ProcessConnectMessage(ConnectMessage message, CancellationToken cancellationToken)
-	{
-		var adapter = message.Adapter;
-		var error = message.Error;
-
-		if (error == null)
-		{
-			if (adapter == Adapter)
-			{
-				await ApplySubscriptionManagerActionsAsync(_subscriptionManager.HandleConnected(subscription => Adapter.IsMessageSupported(subscription.SubscriptionMessage.Type)), cancellationToken);
-
-				// raise event after re subscriptions cause handler on Connected event can send some subscriptions
-				RaiseConnected();
-			}
-			else
-				RaiseConnectedEx(adapter);
-		}
-		else
-		{
-			if (adapter == Adapter)
-				RaiseConnectionError(error);
-			else
-				RaiseConnectionErrorEx(adapter, error);
-		}
-	}
-
-	private void ProcessDisconnectMessage(DisconnectMessage message)
-	{
-		var adapter = message.Adapter;
-		var error = message.Error;
-
-		if (error == null)
-		{
-			if (adapter == Adapter)
-				RaiseDisconnected();
-			else
-				RaiseDisconnectedEx(adapter);
-		}
-		else
-		{
-			if (adapter == Adapter)
-				RaiseConnectionError(error);
-			else
-				RaiseConnectionErrorEx(adapter, error);
-		}
-	}
-
-	private void ProcessConnectionLostMessage(Message message)
-	{
-		RaiseConnectionLost(message.Adapter);
-	}
-
-	private void ProcessConnectionRestoredMessage(Message message)
-	{
-		RaiseConnectionRestored(message.Adapter);
-	}
-
-	private void ProcessBoardStateMessage(BoardStateMessage message)
-	{
-		ExchangeBoard board;
-
-		if (message.BoardCode.IsEmpty())
-			board = null;
-		else
-			board = ExchangeInfoProvider.GetOrCreateBoard(message.BoardCode);
-
-		RaiseReceived(board, message, BoardReceived);
-	}
-
-	private void ProcessBoardMessage(BoardMessage message)
-	{
-		var board = ExchangeInfoProvider.GetOrCreateBoard(message.Code, out var isNew, code =>
-		{
-			var b = new ExchangeBoard
-			{
-				Code = code,
-				Exchange = message.ToExchange(),
-			};
-			return b.ApplyChanges(message);
-		});
-
-		var subscriptions = _subscriptionManager.ProcessLookupResponse(message, board);
-		RaiseReceived(board, subscriptions, BoardReceived);
-	}
-
-	private async ValueTask ProcessSecurityMessage(SecurityMessage message, CancellationToken cancellationToken)
-	{
-		var security = await GetSecurityAsync(message.SecurityId, s =>
-		{
-			if (!UpdateSecurityByDefinition)
-				return false;
-
-			s.ApplyChanges(message, ExchangeInfoProvider, OverrideSecurityData);
-			return true;
-		}, cancellationToken);
-
-		var subscriptions = _subscriptionManager.ProcessLookupResponse(message, security);
-		RaiseReceived(security, subscriptions, SecurityReceived);
-	}
-
-	private void ProcessDataTypeInfoMessage(DataTypeInfoMessage message)
-	{
-		var dt = message.FileDataType ?? throw new InvalidOperationException(LocalizedStrings.NoDataTypeSelected);
-
-		_subscriptionManager.ProcessLookupResponse(message, dt);
-		RaiseReceived(dt, message, DataTypeReceived);
-	}
-
-	private async ValueTask ProcessLevel1ChangeMessage(Level1ChangeMessage message, CancellationToken cancellationToken)
-	{
-		Security security = null;
-
-		if (RaiseReceived(message, message, RaiseLevel1Received, out var anyCanOnline) != true)
-		{
-			if (anyCanOnline != true)
-				return;
-
-			security = await EnsureGetSecurityAsync(message, cancellationToken);
-
-			if (_entityCache.HasLevel1Info(security))
-				return;
-		}
-
-#pragma warning disable CS0618 // Type or member is obsolete
-		if (UpdateSecurityByLevel1)
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			security.ApplyChanges(message);
-		}
-#pragma warning restore CS0618 // Type or member is obsolete
-
-		if (ValuesChanged is not null)
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			var time = message.ServerTime;
-			var info = _entityCache.GetSecurityValues(security, time);
-
-			var changes = message.Changes;
-			var cloned = false;
-
-			foreach (var change in message.Changes)
-			{
-				var field = change.Key;
-
-				if (!info.CanLastTrade && field.IsLastTradeField())
-				{
-					if (!cloned)
-					{
-						changes = changes.ToDictionary();
-						cloned = true;
-					}
-
-					changes.Remove(field);
-
-					continue;
-				}
-
-				if (!info.CanBestQuotes && (field.IsBestBidField() || field.IsBestAskField()))
-				{
-					if (!cloned)
-					{
-						changes = changes.ToDictionary();
-						cloned = true;
-					}
-
-					changes.Remove(field);
-
-					continue;
-				}
-
-				info.SetValue(time, field, change.Value);
-			}
-
-			if (changes.Count > 0)
-				RaiseValuesChanged(security, message.Changes, message.ServerTime, message.LocalTime);
-		}
-	}
-
 	/// <inheritdoc />
 	public Portfolio LookupByPortfolioName(string name) => GetPortfolio(name, null, out _);
 
@@ -1028,7 +727,7 @@ partial class Connector
 	/// <returns>The got portfolio. If there is no portfolio by given criteria, <see langword="null" /> is returned.</returns>
 	public Portfolio GetPortfolio(string name) => LookupByPortfolioName(name);
 
-	private Portfolio GetPortfolio(string name, Func<Portfolio, bool> changePortfolio, out bool isNew)
+	internal Portfolio GetPortfolio(string name, Func<Portfolio, bool> changePortfolio, out bool isNew)
 	{
 		if (name.IsEmpty())
 			throw new ArgumentNullException(nameof(name));
@@ -1050,509 +749,5 @@ partial class Connector
 			RaisePortfolioChanged(portfolio);
 
 		return portfolio;
-	}
-
-	private void ProcessPortfolioMessage(PortfolioMessage message)
-	{
-		var portfolio = GetPortfolio(message.PortfolioName, p =>
-		{
-			message.ToPortfolio(p, ExchangeInfoProvider);
-			return true;
-		}, out var isNew);
-
-		//if (message.OriginalTransactionId == 0)
-		//	return;
-
-		if (isNew)
-			_subscriptionManager.ProcessLookupResponse(message, portfolio);
-
-		RaiseReceived(portfolio, message, PortfolioReceived);
-	}
-
-	private async ValueTask ProcessPositionChangeMessage(PositionChangeMessage message, CancellationToken cancellationToken)
-	{
-		if (!message.StrategyId.IsEmpty())
-			return;
-
-		Portfolio portfolio;
-
-		if (message.IsMoney())
-		{
-			portfolio = GetPortfolio(message.PortfolioName, pf =>
-			{
-				if (message.LimitType != null || !UpdatePortfolioByChange)
-					return false;
-
-				pf.ApplyChanges(message, ExchangeInfoProvider);
-				return true;
-			}, out _);
-
-			RaiseReceived(portfolio, message, PortfolioReceived);
-		}
-
-		var security = await EnsureGetSecurityAsync(message, cancellationToken);
-		portfolio = LookupByPortfolioName(message.PortfolioName);
-
-		var valueInLots = message.TryGetDecimal(PositionChangeTypes.CurrentValueInLots);
-		if (valueInLots != null)
-		{
-			if (!message.Changes.ContainsKey(PositionChangeTypes.CurrentValue))
-			{
-				var currValue = (decimal)valueInLots / (security.VolumeStep ?? 1);
-				message.Add(PositionChangeTypes.CurrentValue, currValue);
-			}
-
-			message.Changes.Remove(PositionChangeTypes.CurrentValueInLots);
-		}
-
-		var position = GetPosition(portfolio, security, message.StrategyId, message.Side, message.ClientCode, message.DepoName, message.LimitType, message.Description);
-		position.ApplyChanges(message);
-
-		RaisePositionChanged(position);
-		RaiseReceived(position, message, PositionReceived);
-	}
-
-	private async ValueTask ProcessNewsMessage(NewsMessage message, CancellationToken cancellationToken)
-	{
-		var security = message.SecurityId == null ? null : await GetSecurityAsync(message.SecurityId.Value, cancellationToken);
-
-		var news = _entityCache.ProcessNewsMessage(security, message);
-
-		if (RaiseReceived(news.news, message, NewsReceived) == false)
-			return;
-	}
-
-	private async ValueTask ProcessQuotesMessage(QuoteChangeMessage message, CancellationToken cancellationToken)
-	{
-		if (RaiseReceived(message, message, OrderBookReceived) != true)
-			return;
-
-		if (message.IsFiltered || message.State != null)
-			return;
-
-		_entityCache.UpdateOrderBookSnapshot(message);
-
-		var bestBid = message.GetBestBid();
-		var bestAsk = message.GetBestAsk();
-		var fromLevel1 = message.BuildFrom == DataType.Level1;
-		var time = message.ServerTime;
-
-		Security security = null;
-
-		if (ValuesChanged is not null && !fromLevel1 && !Adapter.Level1Extend && (bestBid != null || bestAsk != null))
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			var info = _entityCache.GetSecurityValues(security, time);
-
-			info.ClearBestQuotes(time);
-
-			var changes = new List<KeyValuePair<Level1Fields, object>>(4);
-
-			if (bestBid != null)
-			{
-				var q = bestBid.Value;
-
-				info.SetValue(time, Level1Fields.BestBidPrice, q.Price);
-				changes.Add(new (Level1Fields.BestBidPrice, q.Price));
-
-				if (q.Volume != 0)
-				{
-					info.SetValue(time, Level1Fields.BestBidVolume, q.Volume);
-					changes.Add(new (Level1Fields.BestBidVolume, q.Volume));
-				}
-			}
-
-			if (bestAsk != null)
-			{
-				var q = bestAsk.Value;
-
-				info.SetValue(time, Level1Fields.BestAskPrice, q.Price);
-				changes.Add(new (Level1Fields.BestAskPrice, q.Price));
-
-				if (q.Volume != 0)
-				{
-					info.SetValue(time, Level1Fields.BestAskVolume, q.Volume);
-					changes.Add(new (Level1Fields.BestAskVolume, q.Volume));
-				}
-			}
-
-			RaiseValuesChanged(security, changes, message.ServerTime, message.LocalTime);
-		}
-
-#pragma warning disable CS0618 // Type or member is obsolete
-		if (UpdateSecurityLastQuotes)
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			var updated = false;
-
-			if (!fromLevel1 || bestBid != null)
-			{
-				updated = true;
-				security.BestBid = bestBid;
-			}
-
-			if (!fromLevel1 || bestAsk != null)
-			{
-				updated = true;
-				security.BestAsk = bestAsk;
-			}
-
-			if (updated)
-			{
-				security.LocalTime = message.LocalTime;
-				security.LastChangeTime = message.ServerTime;
-
-				// стаканы по ALL обновляют BestXXX по конкретным инструментам
-				if (security.Board?.Code == SecurityId.AssociatedBoardCode)
-				{
-					var changedSecurities = new Dictionary<Security, RefPair<bool, bool>>();
-
-					foreach (var bid in message.Bids)
-					{
-						if (bid.BoardCode.IsEmpty())
-							continue;
-
-						var innerSecurity = await GetSecurityAsync(new SecurityId
-						{
-							SecurityCode = security.Code,
-							BoardCode = bid.BoardCode
-						}, cancellationToken);
-
-						var info = changedSecurities.SafeAdd(innerSecurity);
-
-						if (info.First)
-							continue;
-
-						info.First = true;
-
-						innerSecurity.BestBid = bid;
-						innerSecurity.LocalTime = message.LocalTime;
-						innerSecurity.LastChangeTime = message.ServerTime;
-					}
-
-					foreach (var ask in message.Asks)
-					{
-						if (ask.BoardCode.IsEmpty())
-							continue;
-
-						var innerSecurity = await GetSecurityAsync(new SecurityId
-						{
-							SecurityCode = security.Code,
-							BoardCode = ask.BoardCode
-						}, cancellationToken);
-
-						var info = changedSecurities.SafeAdd(innerSecurity);
-
-						if (info.Second)
-							continue;
-
-						info.Second = true;
-
-						innerSecurity.BestAsk = ask;
-						innerSecurity.LocalTime = message.LocalTime;
-						innerSecurity.LastChangeTime = message.ServerTime;
-					}
-				}
-			}
-		}
-#pragma warning restore CS0618 // Type or member is obsolete
-	}
-
-	private void ProcessOrderLogMessage(ExecutionMessage message)
-	{
-		if (RaiseReceived(message, message, OrderLogReceived) == false)
-			return;
-	}
-
-	private async ValueTask ProcessTradeMessage(ExecutionMessage message, CancellationToken cancellationToken)
-	{
-		if (RaiseReceived(message, message, TickTradeReceived) != true)
-			return;
-
-		Security security = null;
-
-		if (ValuesChanged is not null)
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			var time = message.ServerTime;
-			var info = _entityCache.GetSecurityValues(security, time);
-
-			info.ClearLastTrade(time);
-
-			var price = message.TradePrice ?? 0;
-
-			var changes = new List<KeyValuePair<Level1Fields, object>>(4)
-			{
-				new (Level1Fields.LastTradeTime, message.ServerTime),
-				new (Level1Fields.LastTradePrice, price)
-			};
-
-			info.SetValue(time, Level1Fields.LastTradeTime, message.ServerTime);
-			info.SetValue(time, Level1Fields.LastTradePrice, price);
-
-			if (message.IsSystem is bool isSystem)
-			{
-				info.SetValue(time, Level1Fields.IsSystem, isSystem);
-				changes.Add(new(Level1Fields.IsSystem, isSystem));
-			}
-
-			if (message.TradeId is long tradeId)
-			{
-				info.SetValue(time, Level1Fields.LastTradeId, tradeId);
-				changes.Add(new(Level1Fields.LastTradeId, tradeId));
-			}
-
-			if (!message.TradeStringId.IsEmpty())
-			{
-				info.SetValue(time, Level1Fields.LastTradeStringId, message.TradeStringId);
-				changes.Add(new(Level1Fields.LastTradeStringId, message.TradeStringId));
-			}
-
-			if (message.TradeVolume is decimal tradeVol)
-			{
-				info.SetValue(time, Level1Fields.LastTradeVolume, tradeVol);
-				changes.Add(new(Level1Fields.LastTradeVolume, tradeVol));
-			}
-
-			if (message.OriginSide is Sides side)
-			{
-				info.SetValue(time, Level1Fields.LastTradeOrigin, side);
-				changes.Add(new(Level1Fields.LastTradeOrigin, side));
-			}
-
-			if (message.IsUpTick is bool isUpTick)
-			{
-				info.SetValue(time, Level1Fields.LastTradeUpDown, isUpTick);
-				changes.Add(new(Level1Fields.LastTradeUpDown, isUpTick));
-			}
-
-			RaiseValuesChanged(security, changes, message.ServerTime, message.LocalTime);
-		}
-
-#pragma warning disable CS0618 // Type or member is obsolete
-		if (UpdateSecurityLastQuotes)
-		{
-			security ??= await EnsureGetSecurityAsync(message, cancellationToken);
-
-			security.LastTick = message;
-		}
-#pragma warning restore CS0618 // Type or member is obsolete
-	}
-
-	private void ProcessOrderMessage(Order o, Security security, ExecutionMessage message, long transactionId/*, bool isStatusRequest*/)
-	{
-		if (message.OrderState != OrderStates.Failed && message.Error == null)
-		{
-			foreach (var change in _entityCache.ProcessOrderMessage(o, security, message, transactionId, LookupByPortfolioName))
-			{
-				if (change == EntityCache.OrderChangeInfo.NotExist)
-				{
-					LogWarning(LocalizedStrings.OrderNotFound, message.OrderId.To<string>() ?? message.OrderStringId);
-					continue;
-				}
-
-				var order = change.Order;
-
-				_entityCache.TrySetAdapter(order, message.Adapter);
-
-				if (change.IsNew)
-				{
-					this.AddOrderInfoLog(order, "New order");
-
-					RaiseNewOrder(order);
-				}
-				else if (change.IsChanged)
-				{
-					this.AddOrderInfoLog(order, "Order changed");
-
-					RaiseOrderChanged(order);
-
-					if (change.IsEdit)
-						RaiseOrderEdited(transactionId, order);
-				}
-
-				RaiseReceived(order, message, OrderReceived);
-			}
-		}
-		else
-		{
-			if (message.OriginalTransactionId == 0)
-			{
-				LogError("Unknown error response for order {0}: {1}.", o, message.Error);
-				return;
-			}
-
-			foreach (var (fail, operation) in _entityCache.ProcessOrderFailMessage(o, security, message))
-			{
-				var order = fail.Order;
-
-				_entityCache.TrySetAdapter(order, message.Adapter);
-
-				//TryProcessFilteredMarketDepth(fail.Order.Security, message);
-
-				//var isRegisterFail = (fail.Order.Id == null && fail.Order.StringId.IsEmpty()) || fail.Order.Status == OrderStatus.RejectedBySystem;
-
-				_entityCache.AddFail(operation, fail);
-
-				switch (operation)
-				{
-					case OrderOperations.Register:
-					{
-						RaiseOrderRegisterFailed(message.OriginalTransactionId, fail);
-						RaiseReceived(fail, message, OrderRegisterFailReceived);
-						break;
-					}
-					case OrderOperations.Cancel:
-					{
-						RaiseOrderCancelFailed(message.OriginalTransactionId, fail);
-						RaiseReceived(fail, message, OrderCancelFailReceived);
-						break;
-					}
-					case OrderOperations.Edit:
-					{
-						RaiseOrderEditFailed(message.OriginalTransactionId, fail);
-						RaiseReceived(fail, message, OrderEditFailReceived);
-						break;
-					}
-					default:
-						throw new ArgumentOutOfRangeException(operation.ToString());
-				}
-			}
-		}
-	}
-
-	private void ProcessOwnTradeMessage(Order order, Security security, ExecutionMessage message, long transactionId)
-	{
-		var (trade, isNew) = _entityCache.ProcessOwnTradeMessage(order, security, message, transactionId);
-
-		if (trade == null)
-			return;
-
-		if (isNew)
-			RaiseNewMyTrade(trade);
-
-		//LogWarning("Duplicate own trade message: {0}", message);
-		RaiseReceived(trade, message, OwnTradeReceived);
-	}
-
-	private async ValueTask ProcessTransactionMessage(ExecutionMessage message, CancellationToken cancellationToken)
-	{
-		var originId = message.OriginalTransactionId;
-
-		if (_entityCache.IsMassCancelation(originId))
-		{
-			if (message.IsOk())
-				RaiseMassOrderCanceled(originId, message.ServerTime);
-			else
-				RaiseMassOrderCancelFailed(originId, message.Error, message.ServerTime);
-
-			return;
-		}
-
-		var isStatusRequest = _entityCache.IsOrderStatusRequest(originId);
-
-		if (!message.IsOk() && isStatusRequest)
-		{
-			// TransId != 0 means contains failed order info (not just status response)
-			if (message.TransactionId == 0)
-				return;
-		}
-
-		Order order = null;
-
-		var transactionId = message.TransactionId;
-
-		if (transactionId == 0)
-		{
-			transactionId = isStatusRequest || _entityCache.IsMassCancelation(originId) ? 0 : originId;
-
-			if (transactionId == 0)
-				order = _entityCache.TryGetOrder(message.OrderId, message.OrderStringId);
-		}
-
-		if (transactionId != 0)
-		{
-			if (message.HasTradeInfo())
-				order = _entityCache.TryGetOrder(transactionId, OrderOperations.Register);
-			else
-				order = _entityCache.TryGetOrder(transactionId, OrderOperations.Edit) ?? _entityCache.TryGetOrder(transactionId, OrderOperations.Cancel) ?? _entityCache.TryGetOrder(transactionId, OrderOperations.Register);
-		}
-
-		Security security;
-
-		if (order == null)
-		{
-			if (message.SecurityId == default)
-			{
-				LogWarning(LocalizedStrings.EmptySecId);
-				LogWarning(message.ToString());
-				return;
-			}
-
-			security = await EnsureGetSecurityAsync(message, cancellationToken);
-
-			if (transactionId == 0 && isStatusRequest)
-				transactionId = TransactionIdGenerator.GetNextId();
-		}
-		else
-			security = order.Security;
-
-		LogDebug("Order '{0}': {1}", order?.TransactionId, message);
-
-		var processed = false;
-
-		if (message.HasOrderInfo())
-		{
-			processed = true;
-			ProcessOrderMessage(order, security, message, transactionId);
-		}
-
-		if (message.HasTradeInfo())
-		{
-			processed = true;
-			ProcessOwnTradeMessage(order, security, message, transactionId);
-		}
-
-		if (!processed)
-			throw new ArgumentOutOfRangeException(nameof(message), message.DataType, LocalizedStrings.UnknownType.Put(message));
-	}
-
-	private async ValueTask ProcessExecutionMessage(ExecutionMessage message, CancellationToken cancellationToken)
-	{
-		if (message.DataType == DataType.Transactions)
-			await ProcessTransactionMessage(message, cancellationToken);
-		else if (message.DataType == DataType.Ticks)
-			await ProcessTradeMessage(message, cancellationToken);
-		else if (message.DataType == DataType.OrderLog)
-			ProcessOrderLogMessage(message);
-		else
-			throw new ArgumentOutOfRangeException(nameof(message), message.DataType, LocalizedStrings.UnknownType.Put(message));
-	}
-
-	private void ProcessCandleMessage(CandleMessage message)
-	{
-		foreach (var (subscription, candle) in _subscriptionManager.UpdateCandles(message))
-		{
-			CandleReceived?.Invoke(subscription, candle);
-			RaiseSubscriptionReceived(subscription, message);
-		}
-	}
-
-	private void ProcessChangePasswordMessage(ChangePasswordMessage message)
-	{
-		RaiseChangePassword(message.OriginalTransactionId, message.Error);
-	}
-
-	private void ProcessSubscriptionMessage(ISubscriptionIdMessage subscrMsg)
-	{
-		RaiseReceived((Message)subscrMsg, subscrMsg, RaiseSubscriptionReceived);
-	}
-
-	private void ProcessErrorMessage(ErrorMessage message)
-	{
-		RaiseError(message.Error);
 	}
 }

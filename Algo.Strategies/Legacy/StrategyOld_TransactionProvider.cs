@@ -1,5 +1,11 @@
 namespace StockSharp.Algo.Strategies;
 
+// StrategyOld ITransactionProvider fragment: the legacy engine's explicit transaction-provider surface.
+// TransactionIdGenerator and the NewOrder stream delegate to the underlying connector via SafeGetConnector();
+// the MassOrderCanceled/MassOrderCanceled2/MassOrderCancelFailed/MassOrderCancelFailed2/LookupPortfoliosResult/
+// LookupPortfoliosResult2 events are no-op stubs and CancelOrders forwards to CancelActiveOrders. Part of the
+// legacy StrategyOld monolith, retained for reference/equivalence testing only and superseded by the modern
+// Strategy engine (see Strategy_TransactionProvider.cs).
 partial class StrategyOld
 {
 	IdGenerator ITransactionProvider.TransactionIdGenerator => SafeGetConnector().TransactionIdGenerator;

@@ -14,8 +14,26 @@ using StockSharp.Algo.Slippage;
 /// </summary>
 public partial class Connector : BaseLogReceiver, IConnector
 {
+	// Core entity cache. Held privately by the facade and injected into the extracted
+	// components (e.g. ConnectorMessageProcessor) as a focused constructor dependency, so the
+	// composed components never reach back into the facade's internals and no assembly-wide
+	// access widening is required.
 	private readonly EntityCache _entityCache;
-	private readonly ConnectorSubscriptionManager _subscriptionManager;
+	// Field typed as the segregated abstraction (IConnectorSubscriptionManager) per the facade
+	// interface-segregation goal; the concrete ConnectorSubscriptionManager still backs it. Held
+	// privately by the facade and injected (interface-typed) into the extracted components as a
+	// focused constructor dependency. Retype is behavior-neutral (same instance, virtual dispatch).
+	private readonly IConnectorSubscriptionManager _subscriptionManager;
+
+	// Extracted inbound-message handler component. The facade retains the OnProcessMessage
+	// dispatch switch and delegates each handler body to this component (composition/delegation),
+	// mirroring the existing _entityCache / _subscriptionManager composition pattern.
+	private readonly IConnectorMessageProcessor _messageProcessor;
+
+	// Extracted event-raising component. The public events remain declared on this facade; the
+	// Raise* helpers delegate their firing logic to this dispatcher, mirroring the same
+	// composition/delegation pattern.
+	private readonly IConnectorEventDispatcher _eventDispatcher;
 
 	// backward compatibility for NewXXX events
 	private readonly CachedSynchronizedSet<Security> _existingSecurities = [];
@@ -56,7 +74,15 @@ public partial class Connector : BaseLogReceiver, IConnector
 
 		var transactionIdGenerator = new MillisecondIncrementalIdGenerator();
 
-		_subscriptionManager = new(this, transactionIdGenerator, UnsubscribeOnDisconnect);
+		// Explicit concrete type on the RHS: the field is now the interface, so target-typed new() cannot infer it.
+		_subscriptionManager = new ConnectorSubscriptionManager(this, transactionIdGenerator, UnsubscribeOnDisconnect);
+
+		// Inject the entity cache and subscription-manager seams as focused constructor
+		// dependencies rather than exposing them as facade internals. Both are already
+		// constructed above, so the injection order is satisfied.
+		_messageProcessor = new ConnectorMessageProcessor(this, _entityCache, _subscriptionManager);
+
+		_eventDispatcher = new ConnectorEventDispatcher(this, _subscriptionManager);
 
 		//SupportLevel1DepthBuilder = true;
 		SupportFilteredMarketDepth = true;
@@ -217,6 +243,12 @@ public partial class Connector : BaseLogReceiver, IConnector
 		remove => _removed -= value;
 	}
 
+	// Narrow fire-only bridge for the extracted ConnectorMessageProcessor
+	// (ProcessSecurityRemoveMessage). Keeps the _removed delegate field private on the facade
+	// while letting the component raise the ISecurityProvider.Removed event through a focused,
+	// invoke-only hook rather than reaching into the field directly.
+	internal void FireSecuritiesRemoved(IEnumerable<Security> securities) => _removed?.Invoke(securities);
+
 	private Action _cleared;
 
 	event Action ISecurityProvider.Cleared
@@ -289,7 +321,7 @@ public partial class Connector : BaseLogReceiver, IConnector
 	public ConnectionStates ConnectionState
 	{
 		get => _subscriptionManager.ConnectionState;
-		private set => _subscriptionManager.ConnectionState = value;
+		internal set => _subscriptionManager.ConnectionState = value;
 	}
 
 	/// <summary>
@@ -501,7 +533,8 @@ public partial class Connector : BaseLogReceiver, IConnector
 		return GetPosition(portfolio, security, strategyId, side, clientCode, depoName, limitType, string.Empty);
 	}
 
-	private Position GetPosition(Portfolio portfolio, Security security, string strategyId, Sides? side, string clientCode, string depoName, TPlusLimits? limitType, string description)
+	// Widened to internal for the extracted ConnectorMessageProcessor (ProcessPositionChangeMessage).
+	internal Position GetPosition(Portfolio portfolio, Security security, string strategyId, Sides? side, string clientCode, string depoName, TPlusLimits? limitType, string description)
 	{
 		if (portfolio == null)
 			throw new ArgumentNullException(nameof(portfolio));
@@ -964,7 +997,8 @@ public partial class Connector : BaseLogReceiver, IConnector
 		// Pure lookup used by the entity cache snapshots: it must not create/persist a security.
 		=> securityId == null || securityId.Value == default ? null : SecurityStorage.LookupById(securityId.Value);
 
-	private async ValueTask<Security> EnsureGetSecurityAsync<TMessage>(TMessage message, CancellationToken cancellationToken)
+	// Widened to internal for the extracted ConnectorMessageProcessor (Level1/tick/trade handlers).
+	internal async ValueTask<Security> EnsureGetSecurityAsync<TMessage>(TMessage message, CancellationToken cancellationToken)
 		where TMessage : ISecurityIdMessage, ISubscriptionIdMessage
 	{
 		var secId = message.SecurityId;
@@ -1000,7 +1034,8 @@ public partial class Connector : BaseLogReceiver, IConnector
 	/// <param name="changeSecurity">The handler changing the instrument. It returns <see langword="true" /> if the instrument has been changed and the <see cref="SecurityReceived"/> should be called.</param>
 	/// <param name="cancellationToken"><see cref="CancellationToken"/></param>
 	/// <returns>Security.</returns>
-	private async ValueTask<Security> GetSecurityAsync(SecurityId id, Func<Security, bool> changeSecurity, CancellationToken cancellationToken)
+	// Widened to internal for the extracted ConnectorMessageProcessor (ProcessSecurityMessage).
+	internal async ValueTask<Security> GetSecurityAsync(SecurityId id, Func<Security, bool> changeSecurity, CancellationToken cancellationToken)
 	{
 		if (id == default)
 			throw new ArgumentNullException(nameof(id));

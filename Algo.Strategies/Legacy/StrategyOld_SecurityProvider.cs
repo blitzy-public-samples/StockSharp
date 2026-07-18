@@ -1,5 +1,9 @@
 ﻿namespace StockSharp.Algo.Strategies;
 
+// Legacy StrategyOld fragment: the explicit ISecurityProvider / ISecurityMessageProvider surface,
+// delegating all security lookup and change notification to the underlying connector.
+// Part of the legacy StrategyOld monolith, retained for reference/equivalence only and superseded
+// by the modern Strategy engine (see Strategy_SecurityProvider.cs).
 partial class StrategyOld
 {
 	private ISecurityProvider SecurityProvider => SafeGetConnector();

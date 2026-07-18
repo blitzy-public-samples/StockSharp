@@ -2,7 +2,7 @@ namespace StockSharp.Algo;
 
 partial class Connector
 {
-	private async ValueTask ApplySubscriptionManagerActionsAsync(ConnectorSubscriptionManager.Actions actions, CancellationToken cancellationToken)
+	internal async ValueTask ApplySubscriptionManagerActionsAsync(ConnectorSubscriptionManager.Actions actions, CancellationToken cancellationToken)
 	{
 		if (actions == null)
 			throw new ArgumentNullException(nameof(actions));
@@ -221,145 +221,188 @@ partial class Connector
 	/// <inheritdoc />
 	public event Action<long, Exception> ChangePasswordResult;
 
-	private void RaiseNewMyTrade(MyTrade trade)
-	{
-		LogInfo("New own trade: {0}", trade);
+	// Internal accessors exposing the multicast event delegates to the extracted
+	// message-processing component. C# forbids referencing an event from outside its
+	// declaring type, so the component reads these delegate-typed properties instead of
+	// the events directly. Behavior is unchanged: each getter returns the current
+	// invocation list (or null), exactly as an in-type reference to the event would.
 
-		NewMyTrade?.Invoke(trade);
-	}
+	/// <summary>Delegate backing the <see cref="ValuesChanged"/> event.</summary>
+	internal Action<Security, IEnumerable<KeyValuePair<Level1Fields, object>>, DateTime, DateTime> ValuesChangedEvent => ValuesChanged;
 
-	private void RaiseNewOrder(Order order)
-	{
-		NewOrder?.Invoke(order);
-	}
+	/// <summary>Delegate backing the <see cref="OrderBookReceived"/> event.</summary>
+	internal Action<Subscription, IOrderBookMessage> OrderBookReceivedEvent => OrderBookReceived;
 
-	private void RaiseOrderChanged(Order order)
-	{
-		OrderChanged?.Invoke(order);
-	}
+	/// <summary>Delegate backing the <see cref="TickTradeReceived"/> event.</summary>
+	internal Action<Subscription, ITickTradeMessage> TickTradeReceivedEvent => TickTradeReceived;
 
-	private void RaiseOrderEdited(long transactionId, Order order)
-	{
-		LogDebug("Order {0} edited by transaction {1}.", order, transactionId);
-		OrderEdited?.Invoke(transactionId, order);
-	}
+	/// <summary>Delegate backing the <see cref="OrderLogReceived"/> event.</summary>
+	internal Action<Subscription, IOrderLogMessage> OrderLogReceivedEvent => OrderLogReceived;
 
-	private void RaiseOrderFailed(string name, long transactionId, OrderFail fail, Action<long, OrderFail> failed)
-	{
-		this.AddErrorLog(() => name + Environment.NewLine + fail.Order + Environment.NewLine + fail.Error);
-		failed?.Invoke(transactionId, fail);
-	}
+	/// <summary>Delegate backing the <see cref="SecurityReceived"/> event.</summary>
+	internal Action<Subscription, Security> SecurityReceivedEvent => SecurityReceived;
 
-	private void RaiseOrderRegisterFailed(long transactionId, OrderFail fail)
-	{
-		RaiseOrderFailed(nameof(OrderRegisterFailed), transactionId, fail, (id, f) => OrderRegisterFailed?.Invoke(f));
-	}
+	/// <summary>Delegate backing the <see cref="BoardReceived"/> event.</summary>
+	internal Action<Subscription, ExchangeBoard> BoardReceivedEvent => BoardReceived;
 
-	private void RaiseOrderCancelFailed(long transactionId, OrderFail fail)
-	{
-		RaiseOrderFailed(nameof(OrderCancelFailed), transactionId, fail, (id, f) => OrderCancelFailed?.Invoke(f));
-	}
+	/// <summary>Delegate backing the <see cref="NewsReceived"/> event.</summary>
+	internal Action<Subscription, News> NewsReceivedEvent => NewsReceived;
 
-	private void RaiseOrderEditFailed(long transactionId, OrderFail fail)
-	{
-		RaiseOrderFailed(nameof(OrderEditFailed), transactionId, fail, OrderEditFailed);
-	}
+	/// <summary>Delegate backing the <see cref="CandleReceived"/> event.</summary>
+	internal Action<Subscription, ICandleMessage> CandleReceivedEvent => CandleReceived;
 
-	private void RaiseMassOrderCanceled(long transactionId, DateTime time)
-	{
-		MassOrderCanceled?.Invoke(transactionId);
-		MassOrderCanceled2?.Invoke(transactionId, time);
-	}
+	/// <summary>Delegate backing the <see cref="OwnTradeReceived"/> event.</summary>
+	internal Action<Subscription, MyTrade> OwnTradeReceivedEvent => OwnTradeReceived;
 
-	private void RaiseMassOrderCancelFailed(long transactionId, Exception error, DateTime time)
-	{
-		MassOrderCancelFailed?.Invoke(transactionId, error);
-		MassOrderCancelFailed2?.Invoke(transactionId, error, time);
-	}
+	/// <summary>Delegate backing the <see cref="OrderReceived"/> event.</summary>
+	internal Action<Subscription, Order> OrderReceivedEvent => OrderReceived;
+
+	/// <summary>Delegate backing the <see cref="OrderRegisterFailReceived"/> event.</summary>
+	internal Action<Subscription, OrderFail> OrderRegisterFailReceivedEvent => OrderRegisterFailReceived;
+
+	/// <summary>Delegate backing the <see cref="OrderCancelFailReceived"/> event.</summary>
+	internal Action<Subscription, OrderFail> OrderCancelFailReceivedEvent => OrderCancelFailReceived;
+
+	/// <summary>Delegate backing the <see cref="OrderEditFailReceived"/> event.</summary>
+	internal Action<Subscription, OrderFail> OrderEditFailReceivedEvent => OrderEditFailReceived;
+
+	/// <summary>Delegate backing the <see cref="PortfolioReceived"/> event.</summary>
+	internal Action<Subscription, Portfolio> PortfolioReceivedEvent => PortfolioReceived;
+
+	/// <summary>Delegate backing the <see cref="PositionReceived"/> event.</summary>
+	internal Action<Subscription, Position> PositionReceivedEvent => PositionReceived;
+
+	/// <summary>Delegate backing the <see cref="DataTypeReceived"/> event.</summary>
+	internal Action<Subscription, DataType> DataTypeReceivedEvent => DataTypeReceived;
+
+	// Thin forwarders that delegate all event-firing orchestration to the extracted
+	// ConnectorEventDispatcher component (see IConnectorEventDispatcher). The public event
+	// declarations above stay on this facade because C# events can only be raised from
+	// within their declaring type; the dispatcher fires them through the internal invoker
+	// hooks (Fire*) declared at the end of this file.
+
+	internal void RaiseNewMyTrade(MyTrade trade)
+		=> _eventDispatcher.RaiseNewMyTrade(trade);
+
+	internal void RaiseNewOrder(Order order)
+		=> _eventDispatcher.RaiseNewOrder(order);
+
+	internal void RaiseOrderChanged(Order order)
+		=> _eventDispatcher.RaiseOrderChanged(order);
+
+	internal void RaiseOrderEdited(long transactionId, Order order)
+		=> _eventDispatcher.RaiseOrderEdited(transactionId, order);
+
+	internal void RaiseOrderRegisterFailed(long transactionId, OrderFail fail)
+		=> _eventDispatcher.RaiseOrderRegisterFailed(transactionId, fail);
+
+	internal void RaiseOrderCancelFailed(long transactionId, OrderFail fail)
+		=> _eventDispatcher.RaiseOrderCancelFailed(transactionId, fail);
+
+	internal void RaiseOrderEditFailed(long transactionId, OrderFail fail)
+		=> _eventDispatcher.RaiseOrderEditFailed(transactionId, fail);
+
+	internal void RaiseMassOrderCanceled(long transactionId, DateTime time)
+		=> _eventDispatcher.RaiseMassOrderCanceled(transactionId, time);
+
+	internal void RaiseMassOrderCancelFailed(long transactionId, Exception error, DateTime time)
+		=> _eventDispatcher.RaiseMassOrderCancelFailed(transactionId, error, time);
 
 	private void RaiseNewPortfolio(Portfolio portfolio)
-	{
-		NewPortfolio?.Invoke(portfolio);
-	}
+		=> _eventDispatcher.RaiseNewPortfolio(portfolio);
 
 	private void RaisePortfolioChanged(Portfolio portfolio)
-	{
-		PortfolioChanged?.Invoke(portfolio);
-	}
+		=> _eventDispatcher.RaisePortfolioChanged(portfolio);
 
 	private void RaiseNewPosition(Position position)
-	{
-		NewPosition?.Invoke(position);
-	}
+		=> _eventDispatcher.RaiseNewPosition(position);
 
-	private void RaisePositionChanged(Position position)
-	{
-		PositionChanged?.Invoke(position);
-	}
+	internal void RaisePositionChanged(Position position)
+		=> _eventDispatcher.RaisePositionChanged(position);
 
-	/// <summary>
-	/// To call the event <see cref="Connected"/>.
-	/// </summary>
-	private void RaiseConnected()
-	{
-		ConnectionState = ConnectionStates.Connected;
-		Connected?.Invoke();
-	}
+	internal void RaiseConnected()
+		=> _eventDispatcher.RaiseConnected();
 
-	/// <summary>
-	/// To call the event <see cref="ConnectedEx"/>.
-	/// </summary>
-	/// <param name="adapter">Adapter, initiated event.</param>
-	private void RaiseConnectedEx(IMessageAdapter adapter)
-	{
-		ConnectedEx?.Invoke(adapter);
-	}
+	internal void RaiseConnectedEx(IMessageAdapter adapter)
+		=> _eventDispatcher.RaiseConnectedEx(adapter);
 
-	/// <summary>
-	/// To call the event <see cref="Disconnected"/>.
-	/// </summary>
-	private void RaiseDisconnected()
-	{
-		ConnectionState = ConnectionStates.Disconnected;
-		Disconnected?.Invoke();
-	}
+	internal void RaiseDisconnected()
+		=> _eventDispatcher.RaiseDisconnected();
 
-	/// <summary>
-	/// To call the event <see cref="DisconnectedEx"/>.
-	/// </summary>
-	/// <param name="adapter">Adapter, initiated event.</param>
-	private void RaiseDisconnectedEx(IMessageAdapter adapter)
-	{
-		DisconnectedEx?.Invoke(adapter);
-	}
+	internal void RaiseDisconnectedEx(IMessageAdapter adapter)
+		=> _eventDispatcher.RaiseDisconnectedEx(adapter);
 
-	/// <summary>
-	/// To call the event <see cref="ConnectionError"/>.
-	/// </summary>
-	/// <param name="exception">Error connection.</param>
-	private void RaiseConnectionError(Exception exception)
-	{
-		if (exception == null)
-			throw new ArgumentNullException(nameof(exception));
+	internal void RaiseConnectionError(Exception exception)
+		=> _eventDispatcher.RaiseConnectionError(exception);
 
-		ConnectionState = ConnectionStates.Failed;
-		ConnectionError?.Invoke(exception);
+	internal void RaiseConnectionErrorEx(IMessageAdapter adapter, Exception exception)
+		=> _eventDispatcher.RaiseConnectionErrorEx(adapter, exception);
 
-		LogError(exception);
-	}
+	internal void RaiseConnectionLost(IMessageAdapter adapter)
+		=> _eventDispatcher.RaiseConnectionLost(adapter);
 
-	/// <summary>
-	/// To call the event <see cref="ConnectionErrorEx"/>.
-	/// </summary>
-	/// <param name="adapter">Adapter, initiated event.</param>
-	/// <param name="exception">Error connection.</param>
-	private void RaiseConnectionErrorEx(IMessageAdapter adapter, Exception exception)
-	{
-		if (exception == null)
-			throw new ArgumentNullException(nameof(exception));
+	internal void RaiseConnectionRestored(IMessageAdapter adapter)
+		=> _eventDispatcher.RaiseConnectionRestored(adapter);
 
-		ConnectionErrorEx?.Invoke(adapter, exception);
-	}
+	private void RaiseCurrentTimeChanged(TimeSpan diff)
+		=> _eventDispatcher.RaiseCurrentTimeChanged(diff);
+
+	internal void RaiseLookupSecuritiesResult(SecurityLookupMessage message, Exception error, Security[] newSecurities)
+		=> _eventDispatcher.RaiseLookupSecuritiesResult(message, error, newSecurities);
+
+	internal void RaiseLookupPortfoliosResult(PortfolioLookupMessage message, Exception error, Portfolio[] newPortfolios)
+		=> _eventDispatcher.RaiseLookupPortfoliosResult(message, error, newPortfolios);
+
+	internal void RaiseValuesChanged(Security security, IEnumerable<KeyValuePair<Level1Fields, object>> changes, DateTime serverTime, DateTime localTime)
+		=> _eventDispatcher.RaiseValuesChanged(security, changes, serverTime, localTime);
+
+	internal void RaiseChangePassword(long transactionId, Exception error)
+		=> _eventDispatcher.RaiseChangePassword(transactionId, error);
+
+	internal void RaiseMarketDataSubscriptionSucceeded(MarketDataMessage message, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataSubscriptionSucceeded(message, subscription);
+
+	internal void RaiseMarketDataSubscriptionFailed(MarketDataMessage origin, SubscriptionResponseMessage reply, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataSubscriptionFailed(origin, reply, subscription);
+
+	internal void RaiseMarketDataUnSubscriptionSucceeded(MarketDataMessage message, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataUnSubscriptionSucceeded(message, subscription);
+
+	internal void RaiseMarketDataUnSubscriptionFailed(MarketDataMessage origin, SubscriptionResponseMessage reply, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataUnSubscriptionFailed(origin, reply, subscription);
+
+	internal void RaiseMarketDataSubscriptionFinished(SubscriptionFinishedMessage message, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataSubscriptionFinished(message, subscription);
+
+	internal void RaiseMarketDataUnexpectedCancelled(MarketDataMessage message, Exception error, Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataUnexpectedCancelled(message, error, subscription);
+
+	internal void RaiseMarketDataSubscriptionOnline(Subscription subscription)
+		=> _eventDispatcher.RaiseMarketDataSubscriptionOnline(subscription);
+
+	internal void RaiseSubscriptionStarted(Subscription subscription)
+		=> _eventDispatcher.RaiseSubscriptionStarted(subscription);
+
+	private ValueTask RaiseNewMessage(Message message, CancellationToken cancellationToken)
+		=> _eventDispatcher.RaiseNewMessage(message, cancellationToken);
+
+	internal bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt)
+		=> _eventDispatcher.RaiseReceived(entity, message, evt);
+
+	internal bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
+		=> _eventDispatcher.RaiseReceived(entity, message, evt, out anyCanOnline);
+
+	internal void RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt)
+		=> _eventDispatcher.RaiseReceived(entity, subscriptions, evt);
+
+	internal bool? RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
+		=> _eventDispatcher.RaiseReceived(entity, subscriptions, evt, out anyCanOnline);
+
+	internal void RaiseSubscriptionReceived(Subscription subscription, object arg)
+		=> _eventDispatcher.RaiseSubscriptionReceived(subscription, arg);
+
+	internal void RaiseLevel1Received(Subscription subscription, Level1ChangeMessage message)
+		=> _eventDispatcher.RaiseLevel1Received(subscription, message);
 
 	/// <summary>
 	/// To call the event <see cref="Error"/>.
@@ -377,175 +420,11 @@ partial class Connector
 	}
 
 	/// <summary>
-	/// To call the event <see cref="CurrentTimeChanged"/>.
+	/// Invokes <see cref="RaiseError"/> on behalf of the extracted message-processing component,
+	/// preserving the protected visibility of the raiser on the facade rather than widening it.
 	/// </summary>
-	/// <param name="diff">The difference in the time since the last call of the event. The first time the event passes the <see cref="TimeSpan.Zero"/> value.</param>
-	private void RaiseCurrentTimeChanged(TimeSpan diff)
-	{
-		CurrentTimeChanged?.Invoke(diff);
-	}
-
-	/// <summary>
-	/// To call the event <see cref="LookupSecuritiesResult"/>.
-	/// </summary>
-	/// <param name="message">Message.</param>
-	/// <param name="error">An error of lookup operation. The value will be <see langword="null"/> if operation complete successfully.</param>
-	/// <param name="newSecurities">Found instruments.</param>
-	private void RaiseLookupSecuritiesResult(SecurityLookupMessage message, Exception error, Security[] newSecurities)
-	{
-		LookupSecuritiesResult?.Invoke(message, newSecurities, error);
-		LookupSecuritiesResult2?.Invoke(message, [], newSecurities, error);
-	}
-
-	/// <summary>
-	/// To call the event <see cref="LookupPortfoliosResult"/>.
-	/// </summary>
-	/// <param name="message">Message.</param>
-	/// <param name="error">An error of lookup operation. The value will be <see langword="null"/> if operation complete successfully.</param>
-	/// <param name="newPortfolios">Found portfolios.</param>
-	private void RaiseLookupPortfoliosResult(PortfolioLookupMessage message, Exception error, Portfolio[] newPortfolios)
-	{
-		LookupPortfoliosResult?.Invoke(message, newPortfolios, error);
-		LookupPortfoliosResult2?.Invoke(message, [], newPortfolios, error);
-	}
-
-	private void RaiseMarketDataSubscriptionSucceeded(MarketDataMessage message, Subscription subscription)
-	{
-		if (message == null)
-			throw new ArgumentNullException(nameof(message));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-
-		var msg = LocalizedStrings.SubscribedOk.Put(securityId, message.DataType2);
-
-		if (message.From != null && message.To != null)
-			msg += LocalizedStrings.FromTill.Put(message.From.Value, message.To.Value);
-
-		LogDebug(msg + ".");
-
-		RaiseSubscriptionStarted(subscription);
-	}
-
-	private void RaiseMarketDataSubscriptionFailed(MarketDataMessage origin, SubscriptionResponseMessage reply, Subscription subscription)
-	{
-		if (origin == null)
-			throw new ArgumentNullException(nameof(origin));
-
-		if (reply == null)
-			throw new ArgumentNullException(nameof(reply));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-		var error = reply.Error ?? new NotSupportedException(LocalizedStrings.SubscriptionNotSupported.Put(origin));
-
-		if (reply.IsNotSupported())
-			LogWarning(LocalizedStrings.SubscriptionNotSupported, origin);
-		else
-			LogError(LocalizedStrings.SubscribedError, securityId, origin.DataType2, error.Message);
-
-		RaiseSubscriptionFailed(subscription, error, true);
-	}
-
-	private void RaiseMarketDataUnSubscriptionSucceeded(MarketDataMessage message, Subscription subscription)
-	{
-		if (message == null)
-			throw new ArgumentNullException(nameof(message));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-
-		var msg = LocalizedStrings.UnSubscribedOk.Put(securityId,	message.DataType2);
-
-		if (message.From != null && message.To != null)
-			msg += LocalizedStrings.FromTill.Put(message.From.Value, message.To.Value);
-
-		LogDebug(msg + ".");
-
-		RaiseSubscriptionStopped(subscription, null);
-	}
-
-	private void RaiseMarketDataUnSubscriptionFailed(MarketDataMessage origin, SubscriptionResponseMessage reply, Subscription subscription)
-	{
-		if (origin == null)
-			throw new ArgumentNullException(nameof(origin));
-
-		if (reply == null)
-			throw new ArgumentNullException(nameof(reply));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-		var error = reply.Error ?? new NotSupportedException();
-
-		LogError(LocalizedStrings.UnSubscribedError, securityId, origin.DataType2, error.Message);
-
-		RaiseSubscriptionFailed(subscription, error, false);
-	}
-
-	private void RaiseMarketDataSubscriptionFinished(SubscriptionFinishedMessage message, Subscription subscription)
-	{
-		if (message == null)
-			throw new ArgumentNullException(nameof(message));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-
-		LogDebug(LocalizedStrings.SubscriptionFinished, securityId, message);
-
-		RaiseSubscriptionStopped(subscription, null);
-	}
-
-	private void RaiseMarketDataUnexpectedCancelled(MarketDataMessage message, Exception error, Subscription subscription)
-	{
-		if (message == null)
-			throw new ArgumentNullException(nameof(message));
-
-		if (error == null)
-			throw new ArgumentNullException(nameof(error));
-
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		var securityId = subscription.SecurityId;
-
-		LogError(LocalizedStrings.SubscriptionUnexpectedCancelled, securityId, message.DataType2, error.Message);
-
-		RaiseSubscriptionStopped(subscription, error);
-	}
-
-	private void RaiseSubscriptionOnline(Subscription subscription)
-	{
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		SubscriptionOnline?.Invoke(subscription);
-	}
-
-	private void RaiseSubscriptionStarted(Subscription subscription)
-	{
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		SubscriptionStarted?.Invoke(subscription);
-	}
-
-	private void RaiseSubscriptionStopped(Subscription subscription, Exception error)
-	{
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
-
-		SubscriptionStopped?.Invoke(subscription, error);
-	}
+	/// <param name="exception">Data processing error.</param>
+	internal void RaiseErrorCore(Exception exception) => RaiseError(exception);
 
 	/// <summary>
 	/// </summary>
@@ -560,86 +439,91 @@ partial class Connector
 		SubscriptionFailed?.Invoke(subscription, error, isSubscribe);
 	}
 
-	private void RaiseMarketDataSubscriptionOnline(Subscription subscription)
-	{
-		if (subscription == null)
-			throw new ArgumentNullException(nameof(subscription));
+	/// <summary>
+	/// Invokes the overridable <see cref="RaiseSubscriptionFailed"/> on behalf of the extracted
+	/// event dispatcher, preserving the protected-virtual override point on the facade.
+	/// </summary>
+	/// <param name="subscription">The affected subscription.</param>
+	/// <param name="error">The error that caused the failure.</param>
+	/// <param name="isSubscribe"><see langword="true"/> for a subscribe failure; <see langword="false"/> for an unsubscribe failure.</param>
+	internal void RaiseSubscriptionFailedCore(Subscription subscription, Exception error, bool isSubscribe)
+		=> RaiseSubscriptionFailed(subscription, error, isSubscribe);
 
-		var securityId = subscription.SecurityId;
+	// Internal invoker hooks. Each fires exactly one facade-owned event using the same
+	// null-conditional (?.Invoke) semantics as the original monolithic implementation, so the
+	// extracted ConnectorEventDispatcher can raise these events without any behavioral change.
 
-		LogDebug(LocalizedStrings.SubscriptionOnline, securityId, subscription.SubscriptionMessage);
+	internal void FireNewMyTrade(MyTrade trade) => NewMyTrade?.Invoke(trade);
 
-		RaiseSubscriptionOnline(subscription);
-	}
+	internal void FireNewOrder(Order order) => NewOrder?.Invoke(order);
 
-	private ValueTask RaiseNewMessage(Message message, CancellationToken cancellationToken)
-	{
-		NewMessage?.Invoke(message);
-		return NewOutMessageAsync?.Invoke(message, cancellationToken) ?? default;
-	}
+	internal void FireOrderChanged(Order order) => OrderChanged?.Invoke(order);
 
-	private void RaiseValuesChanged(Security security, IEnumerable<KeyValuePair<Level1Fields, object>> changes, DateTime serverTime, DateTime localTime)
-	{
-		ValuesChanged?.Invoke(security, changes, serverTime, localTime);
-	}
+	internal void FireOrderEdited(long transactionId, Order order) => OrderEdited?.Invoke(transactionId, order);
 
-	private void RaiseConnectionLost(IMessageAdapter adapter)
-	{
-		ConnectionLost?.Invoke(adapter);
-	}
+	internal void FireOrderRegisterFailed(OrderFail fail) => OrderRegisterFailed?.Invoke(fail);
 
-	private void RaiseConnectionRestored(IMessageAdapter adapter)
-	{
-		ConnectionRestored?.Invoke(adapter);
-	}
+	internal void FireOrderCancelFailed(OrderFail fail) => OrderCancelFailed?.Invoke(fail);
 
-	private void RaiseChangePassword(long transactionId, Exception error)
-	{
-		ChangePasswordResult?.Invoke(transactionId, error);
-	}
+	internal void FireOrderEditFailed(long transactionId, OrderFail fail) => OrderEditFailed?.Invoke(transactionId, fail);
 
-	private bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt)
-	{
-		return RaiseReceived(entity, message, evt, out _);
-	}
+	internal void FireMassOrderCanceled(long transactionId) => MassOrderCanceled?.Invoke(transactionId);
 
-	private bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
-	{
-		return RaiseReceived(entity, _subscriptionManager.GetSubscriptions(message), evt, out anyCanOnline);
-	}
+	internal void FireMassOrderCanceled2(long transactionId, DateTime time) => MassOrderCanceled2?.Invoke(transactionId, time);
 
-	private void RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt)
-	{
-		RaiseReceived(entity, subscriptions, evt, out _);
-	}
+	internal void FireMassOrderCancelFailed(long transactionId, Exception error) => MassOrderCancelFailed?.Invoke(transactionId, error);
 
-	private bool? RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
-	{
-		if (subscriptions is null)
-			throw new ArgumentNullException(nameof(subscriptions));
+	internal void FireMassOrderCancelFailed2(long transactionId, Exception error, DateTime time) => MassOrderCancelFailed2?.Invoke(transactionId, error, time);
 
-		bool? anyOnline = null;
-		anyCanOnline = null;
+	internal void FireNewPortfolio(Portfolio portfolio) => NewPortfolio?.Invoke(portfolio);
 
-		foreach (var subscription in subscriptions)
-		{
-			anyOnline = anyOnline == true || subscription.State == SubscriptionStates.Online;
-			anyCanOnline = anyCanOnline == true || (subscription.State == SubscriptionStates.Active && !subscription.SubscriptionMessage.IsHistoryOnly());
+	internal void FirePortfolioChanged(Portfolio portfolio) => PortfolioChanged?.Invoke(portfolio);
 
-			evt?.Invoke(subscription, entity);
-			RaiseSubscriptionReceived(subscription, entity);
-		}
+	internal void FireNewPosition(Position position) => NewPosition?.Invoke(position);
 
-		return anyOnline;
-	}
+	internal void FirePositionChanged(Position position) => PositionChanged?.Invoke(position);
 
-	private void RaiseSubscriptionReceived(Subscription subscription, object arg)
-	{
-		SubscriptionReceived?.Invoke(subscription, arg);
-	}
+	internal void FireConnected() => Connected?.Invoke();
 
-	private void RaiseLevel1Received(Subscription subscription, Level1ChangeMessage message)
-	{
-		Level1Received?.Invoke(subscription, message);
-	}
+	internal void FireConnectedEx(IMessageAdapter adapter) => ConnectedEx?.Invoke(adapter);
+
+	internal void FireDisconnected() => Disconnected?.Invoke();
+
+	internal void FireDisconnectedEx(IMessageAdapter adapter) => DisconnectedEx?.Invoke(adapter);
+
+	internal void FireConnectionError(Exception exception) => ConnectionError?.Invoke(exception);
+
+	internal void FireConnectionErrorEx(IMessageAdapter adapter, Exception exception) => ConnectionErrorEx?.Invoke(adapter, exception);
+
+	internal void FireCurrentTimeChanged(TimeSpan diff) => CurrentTimeChanged?.Invoke(diff);
+
+	internal void FireLookupSecuritiesResult(SecurityLookupMessage message, IEnumerable<Security> newSecurities, Exception error) => LookupSecuritiesResult?.Invoke(message, newSecurities, error);
+
+	internal void FireLookupSecuritiesResult2(SecurityLookupMessage message, IEnumerable<Security> online, IEnumerable<Security> newSecurities, Exception error) => LookupSecuritiesResult2?.Invoke(message, online, newSecurities, error);
+
+	internal void FireLookupPortfoliosResult(PortfolioLookupMessage message, IEnumerable<Portfolio> newPortfolios, Exception error) => LookupPortfoliosResult?.Invoke(message, newPortfolios, error);
+
+	internal void FireLookupPortfoliosResult2(PortfolioLookupMessage message, IEnumerable<Portfolio> online, IEnumerable<Portfolio> newPortfolios, Exception error) => LookupPortfoliosResult2?.Invoke(message, online, newPortfolios, error);
+
+	internal void FireValuesChanged(Security security, IEnumerable<KeyValuePair<Level1Fields, object>> changes, DateTime serverTime, DateTime localTime) => ValuesChanged?.Invoke(security, changes, serverTime, localTime);
+
+	internal void FireChangePasswordResult(long transactionId, Exception error) => ChangePasswordResult?.Invoke(transactionId, error);
+
+	internal void FireSubscriptionOnline(Subscription subscription) => SubscriptionOnline?.Invoke(subscription);
+
+	internal void FireSubscriptionStarted(Subscription subscription) => SubscriptionStarted?.Invoke(subscription);
+
+	internal void FireSubscriptionStopped(Subscription subscription, Exception error) => SubscriptionStopped?.Invoke(subscription, error);
+
+	internal void FireSubscriptionReceived(Subscription subscription, object arg) => SubscriptionReceived?.Invoke(subscription, arg);
+
+	internal void FireLevel1Received(Subscription subscription, Level1ChangeMessage message) => Level1Received?.Invoke(subscription, message);
+
+	internal void FireConnectionLost(IMessageAdapter adapter) => ConnectionLost?.Invoke(adapter);
+
+	internal void FireConnectionRestored(IMessageAdapter adapter) => ConnectionRestored?.Invoke(adapter);
+
+	internal void FireNewMessage(Message message) => NewMessage?.Invoke(message);
+
+	internal ValueTask FireNewOutMessageAsync(Message message, CancellationToken cancellationToken) => NewOutMessageAsync?.Invoke(message, cancellationToken) ?? default;
 }
